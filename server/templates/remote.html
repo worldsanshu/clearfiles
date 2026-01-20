@@ -92,7 +92,7 @@
             <div class="spinner"></div>
             <div id="loading-text">正在等待设备连接...<br><span style="font-size: 12px; color: #94a3b8;">(可能需要 5-10 秒)</span></div>
         </div>
-        <img id="remote-screen" alt="Remote Screen" />
+        <img id="remote-screen" alt="远程画面" />
     </div>
 
     <script>
@@ -156,10 +156,6 @@
                 console.error("WS Error:", err);
                 statusBadge.textContent = "连接错误";
                 statusBadge.className = "status-badge status-failed";
-            };
-        }
-                console.error("WS Error:", err);
-                ws.close();
             };
         }
 

