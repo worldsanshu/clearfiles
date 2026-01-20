@@ -1456,6 +1456,7 @@ func handleInputMessage(data []byte) {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	setCursorPos := user32.NewProc("SetCursorPos")
 	mouseEvent := user32.NewProc("mouse_event")
+	keybdEvent := user32.NewProc("keybd_event")
 
 	// Consts
 	const (
@@ -1465,6 +1466,7 @@ func handleInputMessage(data []byte) {
 		MOUSEEVENTF_RIGHTUP    = 0x0010
 		MOUSEEVENTF_MIDDLEDOWN = 0x0020
 		MOUSEEVENTF_MIDDLEUP   = 0x0040
+		KEYEVENTF_KEYUP        = 0x0002
 	)
 
 	switch event.Type {
@@ -1490,6 +1492,10 @@ func handleInputMessage(data []byte) {
 			flags = MOUSEEVENTF_RIGHTUP
 		}
 		mouseEvent.Call(flags, 0, 0, 0, 0)
+	case "keydown":
+		keybdEvent.Call(uintptr(event.Key), 0, 0, 0)
+	case "keyup":
+		keybdEvent.Call(uintptr(event.Key), 0, KEYEVENTF_KEYUP, 0)
 	case "click":
 		// Simple click
 		setCursorPos.Call(uintptr(absX), uintptr(absY))

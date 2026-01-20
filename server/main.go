@@ -59,25 +59,31 @@ func main() {
 	// Initialize Database
 	initDB()
 
-	// API Routes
+	// API Routes (Public)
 	http.HandleFunc("/api/register", handleRegister)
 	http.HandleFunc("/api/poll", handlePoll)
 	http.HandleFunc("/api/report", handleReport)
 	http.HandleFunc("/api/heartbeat", handleHeartbeat)
-
-	// Admin Routes
-	http.HandleFunc("/", handleDashboard)
-	http.HandleFunc("/admin/command", handleSendCommand)
-	http.HandleFunc("/admin/remark", handleUpdateRemark)
-	http.HandleFunc("/admin/delete_device", handleDeleteDevice)
-	http.HandleFunc("/admin/group", handleUpdateGroup)
-	http.HandleFunc("/admin/batch_group", handleBatchUpdateGroup)
-	http.HandleFunc("/admin/logs", handleGetLogs)
-	http.HandleFunc("/admin/password", handleUpdatePassword)
 	http.HandleFunc("/api/upload", handleUpload)
 	http.HandleFunc("/api/ws/client", handleClientWS)
-	http.HandleFunc("/api/ws/admin", handleAdminWS)
-	http.HandleFunc("/admin/remote", handleRemoteControl)
+
+	// Login & Download (Public)
+	http.HandleFunc("/login", handleLogin)
+	http.HandleFunc("/api/login", handleAPILogin)
+	http.HandleFunc("/api/logout", handleLogout)
+	http.HandleFunc("/api/client/download", handleDownloadClient)
+
+	// Admin Routes (Protected)
+	http.HandleFunc("/", authMiddleware(handleDashboard))
+	http.HandleFunc("/admin/command", authMiddleware(handleSendCommand))
+	http.HandleFunc("/admin/remark", authMiddleware(handleUpdateRemark))
+	http.HandleFunc("/admin/delete_device", authMiddleware(handleDeleteDevice))
+	http.HandleFunc("/admin/group", authMiddleware(handleUpdateGroup))
+	http.HandleFunc("/admin/batch_group", authMiddleware(handleBatchUpdateGroup))
+	http.HandleFunc("/admin/logs", authMiddleware(handleGetLogs))
+	http.HandleFunc("/admin/password", authMiddleware(handleUpdatePassword))
+	http.HandleFunc("/api/ws/admin", authMiddleware(handleAdminWS))
+	http.HandleFunc("/admin/remote", authMiddleware(handleRemoteControl))
 
 	// Serve static files (uploads)
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
@@ -95,6 +101,84 @@ func main() {
 	err := http.ListenAndServe(":1214", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
+	}
+}
+
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		t, err := template.ParseFS(templatesFS, "templates/login.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		t.Execute(w, nil)
+	}
+}
+
+func handleAPILogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if checkPassword(req.Password) {
+		token := getAdminPassword()
+		http.SetCookie(w, &http.Cookie{
+			Name:     "admin_token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Expires:  time.Now().Add(24 * time.Hour),
+		})
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	} else {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"message": "密码错误"})
+	}
+}
+
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "admin_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+	})
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleDownloadClient(w http.ResponseWriter, r *http.Request) {
+	// Try to find the client executable
+	// 1. Check relative path from server execution (often c:\clearfiles\clearfiles\server)
+	path := filepath.Join("..", "client", "client.exe")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// 2. Check absolute path
+		path = `C:\clearfiles\clearfiles\client\client.exe`
+	}
+
+	// Set filename for download
+	w.Header().Set("Content-Disposition", "attachment; filename=client.exe")
+	http.ServeFile(w, r, path)
+}
+
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("admin_token")
+		if err != nil || cookie.Value != getAdminPassword() {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		next(w, r)
 	}
 }
 
