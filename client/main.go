@@ -680,10 +680,22 @@ func startLockScreen() string {
 	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	currentLockPassword = fmt.Sprintf("%06d", n.Int64())
 
+	resultCh := make(chan string)
 	go func() {
 		runtime.LockOSThread()
-		createLockWindow()
+		createLockWindow(resultCh)
 	}()
+
+	// Wait for result
+	select {
+	case res := <-resultCh:
+		if res != "OK" {
+			return "Failed to lock: " + res
+		}
+	case <-time.After(5 * time.Second):
+		return "Timeout waiting for lock window creation"
+	}
+
 	saveLockState(true, currentLockPassword)
 	return "Screen lock initiated. Unlock PIN: " + currentLockPassword
 }
@@ -698,7 +710,7 @@ func resumeLockScreen(pin string) {
 	currentLockPassword = pin
 	go func() {
 		runtime.LockOSThread()
-		createLockWindow()
+		createLockWindow(nil)
 	}()
 }
 
@@ -932,7 +944,7 @@ var (
 	hEdit               uintptr
 )
 
-func createLockWindow() {
+func createLockWindow(resultCh chan string) {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	gdi32 := syscall.NewLazyDLL("gdi32.dll")
@@ -966,14 +978,24 @@ func createLockWindow() {
 	wc.HbrBackground = syscall.Handle(hBrush)
 	wc.LpszClassName = className
 
-	procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	ret, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc)))
+	if ret == 0 {
+		if errno, ok := err.(syscall.Errno); ok && errno != 1410 { // ERROR_CLASS_ALREADY_EXISTS
+			msg := fmt.Sprintf("RegisterClassExW failed: %v", err)
+			log.Println(msg)
+			if resultCh != nil {
+				resultCh <- msg
+			}
+			return
+		}
+	}
 
 	screenWidth, _, _ := procGetSystemMetrics.Call(0)  // SM_CXSCREEN
 	screenHeight, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
 
 	// WS_POPUP | WS_VISIBLE = 0x80000000 | 0x10000000
 	// WS_EX_TOPMOST = 0x00000008
-	hwnd, _, _ := procCreateWindowExW.Call(
+	hwnd, _, err := procCreateWindowExW.Call(
 		0x00000008, // ExStyle: TOPMOST
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(windowName)),
@@ -983,7 +1005,11 @@ func createLockWindow() {
 	)
 
 	if hwnd == 0 {
-		log.Println("Failed to create lock window")
+		msg := fmt.Sprintf("Failed to create lock window: %v", err)
+		log.Println(msg)
+		if resultCh != nil {
+			resultCh <- msg
+		}
 		return
 	}
 	lockHwnd = hwnd
@@ -1024,6 +1050,10 @@ func createLockWindow() {
 
 	// Force Focus to Edit
 	user32.NewProc("SetFocus").Call(hEdit)
+
+	if resultCh != nil {
+		resultCh <- "OK"
+	}
 
 	var msg MSG
 	for {

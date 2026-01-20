@@ -74,6 +74,9 @@ func main() {
 	http.HandleFunc("/admin/logs", handleGetLogs)
 	http.HandleFunc("/admin/password", handleUpdatePassword)
 	http.HandleFunc("/api/upload", handleUpload)
+	http.HandleFunc("/api/ws/client", handleClientWS)
+	http.HandleFunc("/api/ws/admin", handleAdminWS)
+	http.HandleFunc("/admin/remote", handleRemoteControl)
 
 	// Serve static files (uploads)
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("uploads"))))
@@ -393,11 +396,11 @@ func handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(logs)
 }
 
-//go:embed templates/dashboard.html
-var dashboardHTML embed.FS
+//go:embed templates/*.html
+var templatesFS embed.FS
 
 func handleDashboard(w http.ResponseWriter, r *http.Request) {
-	t, err := template.ParseFS(dashboardHTML, "templates/dashboard.html")
+	t, err := template.ParseFS(templatesFS, "templates/dashboard.html")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -410,6 +413,28 @@ func handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t.Execute(w, deviceList)
+}
+
+func handleRemoteControl(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.URL.Query().Get("device_id")
+	if deviceID == "" {
+		http.Error(w, "Missing device_id", http.StatusBadRequest)
+		return
+	}
+
+	t, err := template.ParseFS(templatesFS, "templates/remote.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := struct {
+		ID string
+	}{
+		ID: deviceID,
+	}
+
+	t.Execute(w, data)
 }
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
