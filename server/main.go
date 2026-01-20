@@ -556,6 +556,17 @@ func handleAdminWS(w http.ResponseWriter, r *http.Request) {
 	adminWS[targetID][conn] = true
 	wsMu.Unlock()
 
+	// Trigger the client to connect
+	// We create a command that the client will pick up in its next poll
+	cmdID := fmt.Sprintf("rc-%d", time.Now().UnixNano())
+	cmd := Command{
+		ID:     cmdID,
+		Action: "remote_control",
+	}
+	if err := addCommand(targetID, cmd); err != nil {
+		log.Println("Failed to queue remote_control command:", err)
+	}
+
 	defer func() {
 		wsMu.Lock()
 		if admins, ok := adminWS[targetID]; ok {

