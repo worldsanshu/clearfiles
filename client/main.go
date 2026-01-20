@@ -1357,17 +1357,33 @@ func startRemoteControl() {
 			bounds := screenshot.GetDisplayBounds(0)
 			img, err := screenshot.CaptureRect(bounds)
 			if err == nil {
+				// Validate bounds
+				if img.Bounds().Empty() {
+					log.Println("Captured empty image")
+					continue
+				}
+
 				// Resize or compress?
 				// Sending full resolution PNG is too slow. Use JPEG.
 				var buf bytes.Buffer
 				// Quality 50 is good balance
 				if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 50}); err == nil {
-					err = c.WriteMessage(websocket.BinaryMessage, buf.Bytes())
+					data := buf.Bytes()
+					if len(data) == 0 {
+						log.Println("Encoded JPEG is empty")
+						continue
+					}
+					// log.Printf("Sending frame size: %d", len(data))
+					err = c.WriteMessage(websocket.BinaryMessage, data)
 					if err != nil {
 						log.Println("WS Write error:", err)
 						return
 					}
+				} else {
+					log.Println("JPEG Encode error:", err)
 				}
+			} else {
+				log.Println("Capture failed:", err)
 			}
 		}
 		time.Sleep(100 * time.Millisecond) // 10 FPS

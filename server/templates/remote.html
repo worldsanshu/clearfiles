@@ -85,6 +85,7 @@
 
             ws.onmessage = (event) => {
                 if (event.data instanceof Blob) {
+                    console.log("Received blob size:", event.data.size);
                     const url = URL.createObjectURL(event.data);
                     screenImg.onload = () => URL.revokeObjectURL(url);
                     screenImg.src = url;

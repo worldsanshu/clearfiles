@@ -520,6 +520,7 @@ func handleClientWS(w http.ResponseWriter, r *http.Request) {
 
 		// Relay to admins
 		if messageType == websocket.BinaryMessage {
+			// log.Printf("Relaying %d bytes to admins", len(p))
 			wsMu.RLock()
 			admins := adminWS[id]
 			for admin := range admins {
