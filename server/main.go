@@ -12,6 +12,21 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// WS Hub
+var (
+	// deviceWS: DeviceID -> WebSocket Connection (The actual client)
+	deviceWS = make(map[string]*websocket.Conn)
+	// adminWS: DeviceID -> List of Admin WebSockets watching this device
+	adminWS = make(map[string]map[*websocket.Conn]bool)
+	wsMu    sync.RWMutex
 )
 
 // Device represents a connected client
@@ -439,4 +454,107 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "File uploaded successfully")
+}
+
+func handleClientWS(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "Missing ID", http.StatusBadRequest)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Upgrade:", err)
+		return
+	}
+	defer conn.Close()
+
+	wsMu.Lock()
+	if old, ok := deviceWS[id]; ok {
+		old.Close()
+	}
+	deviceWS[id] = conn
+	wsMu.Unlock()
+
+	log.Printf("Device %s connected via WS", id)
+	defer func() {
+		wsMu.Lock()
+		if deviceWS[id] == conn {
+			delete(deviceWS, id)
+		}
+		wsMu.Unlock()
+		log.Printf("Device %s disconnected from WS", id)
+	}()
+
+	for {
+		messageType, p, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+
+		// Relay to admins
+		if messageType == websocket.BinaryMessage {
+			wsMu.RLock()
+			admins := adminWS[id]
+			for admin := range admins {
+				// Non-blocking send ideally, but simple for now
+				err := admin.WriteMessage(websocket.BinaryMessage, p)
+				if err != nil {
+					// Handle slow admin? Close?
+					log.Println("Error writing to admin:", err)
+				}
+			}
+			wsMu.RUnlock()
+		}
+	}
+}
+
+func handleAdminWS(w http.ResponseWriter, r *http.Request) {
+	targetID := r.URL.Query().Get("target_id")
+	if targetID == "" {
+		http.Error(w, "Missing target_id", http.StatusBadRequest)
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Upgrade:", err)
+		return
+	}
+	defer conn.Close()
+
+	wsMu.Lock()
+	if adminWS[targetID] == nil {
+		adminWS[targetID] = make(map[*websocket.Conn]bool)
+	}
+	adminWS[targetID][conn] = true
+	wsMu.Unlock()
+
+	defer func() {
+		wsMu.Lock()
+		if admins, ok := adminWS[targetID]; ok {
+			delete(admins, conn)
+			if len(admins) == 0 {
+				delete(adminWS, targetID)
+			}
+		}
+		wsMu.Unlock()
+	}()
+
+	for {
+		messageType, p, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+
+		// Relay input events to device
+		if messageType == websocket.TextMessage {
+			wsMu.RLock()
+			if client, ok := deviceWS[targetID]; ok {
+				client.WriteMessage(websocket.TextMessage, p)
+			}
+			wsMu.RUnlock()
+		}
+	}
 }

