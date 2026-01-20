@@ -97,7 +97,7 @@ func main() {
 
 	// For demonstration purposes without certs, we'll run on HTTP :8080
 	// PROD: Use the TLS version above
-	fmt.Println("Server started on :8080 (Production should use :443 with TLS)")
+	fmt.Println("Server started on :1214 (Production should use :443 with TLS)")
 	err := http.ListenAndServe(":1214", nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
