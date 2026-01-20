@@ -36,8 +36,7 @@
             max-width: 100%;
             max-height: 100%;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            /* cursor: none; */ /* Show default cursor */
-            cursor: crosshair;
+            cursor: default;
         }
         .status-badge {
             padding: 4px 8px;
@@ -123,7 +122,7 @@
             }, 15000); // 15 seconds timeout
 
             ws.onopen = () => {
-                statusBadge.textContent = "已连接 (等待画面)";
+                statusBadge.textContent = "已连接 (可输入控制)";
                 statusBadge.className = "status-badge status-connected";
             };
 
@@ -196,8 +195,33 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 const {x, y} = getCoords(e);
                 ws.send(JSON.stringify({ type: 'mousedown', x, y, button: e.button }));
+                showClickFeedback(e.clientX, e.clientY);
             }
         });
+
+        function showClickFeedback(x, y) {
+            const el = document.createElement('div');
+            el.style.position = 'fixed';
+            el.style.left = x + 'px';
+            el.style.top = y + 'px';
+            el.style.width = '20px';
+            el.style.height = '20px';
+            el.style.borderRadius = '50%';
+            el.style.border = '2px solid rgba(255, 255, 255, 0.8)';
+            el.style.background = 'rgba(255, 255, 255, 0.3)';
+            el.style.pointerEvents = 'none';
+            el.style.transform = 'translate(-50%, -50%)';
+            el.style.transition = 'all 0.3s ease-out';
+            el.style.zIndex = '9999';
+            document.body.appendChild(el);
+            
+            requestAnimationFrame(() => {
+                el.style.transform = 'translate(-50%, -50%) scale(2)';
+                el.style.opacity = '0';
+            });
+
+            setTimeout(() => el.remove(), 300);
+        }
 
         screenImg.addEventListener('mouseup', (e) => {
             if (ws && ws.readyState === WebSocket.OPEN) {

