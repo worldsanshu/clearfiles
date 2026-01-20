@@ -13,10 +13,15 @@ var db *sql.DB
 func initDB() {
 	var err error
 	// Open SQLite database file "clearfile.db"
-	db, err = sql.Open("sqlite", "clearfile.db")
+	// Set busy_timeout to 5000ms to avoid SQLITE_BUSY errors
+	// Enable WAL mode for better concurrency
+	db, err = sql.Open("sqlite", "clearfile.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Optional: optimize connection pool for SQLite
+	db.SetMaxOpenConns(25) // WAL allows concurrent reads, increase limit
 
 	createTables := `
 	CREATE TABLE IF NOT EXISTS devices (
@@ -50,6 +55,13 @@ func initDB() {
 		created_at DATETIME
 	);
 	`
+
+	// Try to add group_name column if it doesn't exist (migration for existing DBs)
+	// We ignore error if column already exists
+	db.Exec("ALTER TABLE devices ADD COLUMN group_name TEXT DEFAULT 'Default'")
+
+	// Add payload column to commands table if it doesn't exist
+	db.Exec("ALTER TABLE commands ADD COLUMN payload TEXT DEFAULT ''")
 
 	_, err = db.Exec(createTables)
 	if err != nil {
@@ -96,8 +108,13 @@ func upsertDevice(d *Device) error {
 	return err
 }
 
+func updateDeviceGroup(deviceID, groupName string) error {
+	_, err := db.Exec("UPDATE devices SET group_name = ? WHERE id = ?", groupName, deviceID)
+	return err
+}
+
 func getAllDevices() ([]*Device, error) {
-	rows, err := db.Query("SELECT id, hostname, os, ip, last_seen, status, remark FROM devices ORDER BY last_seen DESC")
+	rows, err := db.Query("SELECT id, hostname, os, ip, last_seen, status, remark, group_name FROM devices ORDER BY last_seen DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -106,12 +123,9 @@ func getAllDevices() ([]*Device, error) {
 	var list []*Device
 	for rows.Next() {
 		var d Device
-		var lastSeen time.Time
-		err := rows.Scan(&d.ID, &d.Hostname, &d.OS, &d.IP, &lastSeen, &d.Status, &d.Remark)
-		if err != nil {
+		if err := rows.Scan(&d.ID, &d.Hostname, &d.OS, &d.IP, &d.LastSeen, &d.Status, &d.Remark, &d.GroupName); err != nil {
 			return nil, err
 		}
-		d.LastSeen = lastSeen
 
 		if time.Since(d.LastSeen) > 1*time.Minute {
 			d.Status = "离线"
