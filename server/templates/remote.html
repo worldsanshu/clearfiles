@@ -36,7 +36,8 @@
             max-width: 100%;
             max-height: 100%;
             box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            cursor: none; /* Hide default cursor when hovering */
+            /* cursor: none; */ /* Show default cursor */
+            cursor: crosshair;
         }
         .status-badge {
             padding: 4px 8px;
@@ -47,6 +48,34 @@
         .status-connected { background-color: #16a34a; color: white; }
         .status-disconnected { background-color: #dc2626; color: white; }
         .status-connecting { background-color: #ca8a04; color: white; }
+        .status-failed { background-color: #7f1d1d; color: white; }
+
+        #loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(30, 41, 59, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -60,6 +89,10 @@
         </div>
     </div>
     <div id="screen-container">
+        <div id="loading-overlay">
+            <div class="spinner"></div>
+            <div id="loading-text">正在等待设备连接...<br><span style="font-size: 12px; color: #94a3b8;">(可能需要 5-10 秒)</span></div>
+        </div>
         <img id="remote-screen" alt="Remote Screen" />
     </div>
 
@@ -67,7 +100,10 @@
         const deviceId = "{{.ID}}";
         const screenImg = document.getElementById('remote-screen');
         const statusBadge = document.getElementById('connection-status');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
         let ws;
+        let connectionTimeout;
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -76,15 +112,29 @@
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'blob';
 
+            // Set a timeout to show "Failed" if connection takes too long
+            connectionTimeout = setTimeout(() => {
+                if (statusBadge.textContent !== "已连接" && statusBadge.textContent !== "传输中") {
+                    statusBadge.textContent = "连接超时";
+                    statusBadge.className = "status-badge status-failed";
+                    loadingText.innerHTML = "连接超时<br><span style='font-size: 12px; color: #ef4444;'>设备可能不在线或无法响应</span>";
+                    document.querySelector('.spinner').style.display = 'none';
+                }
+            }, 15000); // 15 seconds timeout
+
             ws.onopen = () => {
-                statusBadge.textContent = "已连接";
+                statusBadge.textContent = "已连接 (等待画面)";
                 statusBadge.className = "status-badge status-connected";
-                // Request first frame or start stream?
-                // For now assuming client pushes frames
             };
 
             ws.onmessage = (event) => {
                 if (event.data instanceof Blob) {
+                    // Hide overlay on first frame
+                    if (loadingOverlay.style.display !== 'none') {
+                        loadingOverlay.style.display = 'none';
+                        statusBadge.textContent = "传输中";
+                    }
+
                     console.log("Received blob size:", event.data.size);
                     const url = URL.createObjectURL(event.data);
                     screenImg.onload = () => URL.revokeObjectURL(url);
@@ -95,10 +145,20 @@
             ws.onclose = () => {
                 statusBadge.textContent = "已断开 (重连中...)";
                 statusBadge.className = "status-badge status-disconnected";
+                
+                // Show overlay again
+                loadingOverlay.style.display = 'flex';
+                loadingText.innerHTML = "连接断开<br><span style='font-size: 12px;'>正在尝试重连...</span>";
+                
                 setTimeout(connect, 3000);
             };
 
             ws.onerror = (err) => {
+                console.error("WS Error:", err);
+                statusBadge.textContent = "连接错误";
+                statusBadge.className = "status-badge status-failed";
+            };
+        }
                 console.error("WS Error:", err);
                 ws.close();
             };
