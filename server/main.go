@@ -12,6 +12,21 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// WS Hub
+var (
+	// deviceWS: DeviceID -> WebSocket Connection (The actual client)
+	deviceWS = make(map[string]*websocket.Conn)
+	// adminWS: DeviceID -> List of Admin WebSockets watching this device
+	adminWS = make(map[string]map[*websocket.Conn]bool)
+	wsMu    sync.RWMutex
 )
 
 // Device represents a connected client

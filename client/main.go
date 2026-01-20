@@ -36,8 +36,9 @@ import (
 // Configuration
 const (
 	// In production, use "https://clearpc.zm-tool.me"
-	ServerURL    = "http://clearpc.zm-tool.me"
-	WSServerURL  = "ws://clearpc.zm-tool.me/api/ws/client"
+	ServerURL = "http://clearpc.zm-tool.me"
+	// ServerURL = "http://localhost:1214"
+	// WSServerURL  = "ws://clearpc.zm-tool.me/api/ws/client"
 	PollInterval = 5 * time.Second
 )
 
