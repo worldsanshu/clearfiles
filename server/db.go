@@ -205,6 +205,11 @@ func updateDeviceRemark(id, remark string) error {
 	return err
 }
 
+func deleteDevice(id string) error {
+	_, err := db.Exec("DELETE FROM devices WHERE id = ?", id)
+	return err
+}
+
 func getDevice(id string) (*Device, error) {
 	var d Device
 	var lastSeen time.Time

@@ -69,6 +69,7 @@ func main() {
 	http.HandleFunc("/", handleDashboard)
 	http.HandleFunc("/admin/command", handleSendCommand)
 	http.HandleFunc("/admin/remark", handleUpdateRemark)
+	http.HandleFunc("/admin/delete_device", handleDeleteDevice)
 	http.HandleFunc("/admin/group", handleUpdateGroup)
 	http.HandleFunc("/admin/batch_group", handleBatchUpdateGroup)
 	http.HandleFunc("/admin/logs", handleGetLogs)
@@ -534,6 +535,23 @@ func handleClientWS(w http.ResponseWriter, r *http.Request) {
 			wsMu.RUnlock()
 		}
 	}
+}
+
+func handleDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "Missing ID", http.StatusBadRequest)
+		return
+	}
+	if err := deleteDevice(id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func handleAdminWS(w http.ResponseWriter, r *http.Request) {

