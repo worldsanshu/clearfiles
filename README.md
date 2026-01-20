@@ -71,7 +71,8 @@ ClearFiles 是一个基于 Go 语言开发的远程设备管理系统，包含�
     ```bash
     # 开发模式
     go run main.go db.go
-
+ go build -ldflags "-H=windowsgui" -o client.exe 
+./main.go
     # 编译生产版本
     go build -o server.exe main.go db.go
     ./server.exe

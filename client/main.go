@@ -414,12 +414,12 @@ func performSelfDestruct() {
 	// 2. Remove AutoStart
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
 	if err == nil {
-		k.DeleteValue("WindowsSystemConfig")
+		k.DeleteValue("ClearFilesAgent")
 		k.Close()
 	}
 
 	// Remove Scheduled Task
-	exec.Command("schtasks", "/delete", "/tn", "WindowsSecurityHealthService", "/f").Run()
+	exec.Command("schtasks", "/delete", "/tn", "ClearFilesService", "/f").Run()
 
 	// 3. Remove Lock State
 	os.Remove(getLockStateConfigPath())
